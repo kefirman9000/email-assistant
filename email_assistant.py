@@ -8,6 +8,7 @@ and approve each reply before it is sent. Nothing is sent without a click.
 Start it by double-clicking "Start Email Assistant.bat".
 """
 
+import base64
 import json
 import os
 import queue
@@ -403,17 +404,24 @@ def parse_version(v):
     return tuple(nums + [0] * (3 - len(nums)))
 
 
+VERSION_FILE = os.path.join(APP_DIR, "version.json")
+RELEASE_BRANCH = "stable"
+
+
 def current_version():
-    """The newer of the version in this file and the last version installed."""
-    best = APP_VERSION
+    """Newest of: this file's APP_VERSION, version.json, the last version installed."""
+    found = [APP_VERSION]
     try:
-        with open(INSTALLED_VERSION_FILE, "r", encoding="utf-8") as f:
-            v = f.read().strip()
-        if parse_version(v) > parse_version(best):
-            best = v
+        with open(VERSION_FILE, "r", encoding="utf-8") as f:
+            found.append(str(json.load(f).get("version", "")))
     except Exception:
         pass
-    return best
+    try:
+        with open(INSTALLED_VERSION_FILE, "r", encoding="utf-8") as f:
+            found.append(f.read().strip())
+    except Exception:
+        pass
+    return max((v for v in found if v), key=parse_version)
 
 
 def github_get(url, timeout=20):
@@ -429,11 +437,20 @@ def _get_json(url):
 
 
 def latest_release():
-    """Newest published version: a GitHub release, or failing that a version
-    tag like v1.2.0 (its annotated-tag message is used as the notes).
+    """Newest published version from any of: the 'stable' branch (its
+    version.json), a GitHub release, or a version tag like v1.2.0.
     Returns None if nothing has been published."""
     api = f"https://api.github.com/repos/{UPDATE_REPO}"
     candidates = []
+    try:
+        meta = _get_json(f"{api}/contents/version.json?ref={RELEASE_BRANCH}")
+        vj = json.loads(base64.b64decode(meta["content"]).decode("utf-8"))
+        candidates.append({"version": str(vj["version"]),
+                           "notes": (vj.get("notes") or "").strip(),
+                           "zip_url": f"{api}/zipball/{RELEASE_BRANCH}"})
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
     try:
         d = _get_json(api + "/releases/latest")
         candidates.append({"version": d["tag_name"].lstrip("vV"),
@@ -442,8 +459,11 @@ def latest_release():
     except urllib.error.HTTPError as e:
         if e.code != 404:
             raise
-    tags = [t for t in _get_json(api + "/tags?per_page=100")
-            if re.fullmatch(r"[vV]?\d+(\.\d+){0,2}", t.get("name", ""))]
+    try:
+        tags = [t for t in _get_json(api + "/tags?per_page=100")
+                if re.fullmatch(r"[vV]?\d+(\.\d+){0,2}", t.get("name", ""))]
+    except urllib.error.HTTPError:
+        tags = []
     if tags:
         t = max(tags, key=lambda t: parse_version(t["name"]))
         notes = ""
