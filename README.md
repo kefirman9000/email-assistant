@@ -12,6 +12,31 @@ It can connect two ways (choose under **Settings → Connection**):
 
 **Nothing is ever sent without you clicking "Approve & send".**
 
+## Screenshots
+
+**Inbox**: every email from your checks, with urgency and what the assistant decided.
+
+![Inbox](docs/screenshots/inbox.png)
+
+**Suggested replies**: review, edit, then approve and send.
+
+![Suggested replies](docs/screenshots/suggested-replies.png)
+
+**Reply picker**: two options side by side; pick a vibe like *Friendly denial* to get two more.
+
+![Reply picker](docs/screenshots/reply-picker.png)
+
+**Dark mode**
+
+![Dark mode](docs/screenshots/dark-mode.png)
+
+<table>
+<tr>
+<td width="50%"><b>Email viewer</b><br><img src="docs/screenshots/email-viewer.png" alt="Email viewer"></td>
+<td width="50%"><b>Settings</b><br><img src="docs/screenshots/settings.png" alt="Settings"></td>
+</tr>
+</table>
+
 ## What you need
 
 - A work Microsoft 365 email account. For the **Microsoft account** connection, IT approves the app once (see [IT setup](#it-setup)). For **Classic Outlook on this PC**, you just need the classic Outlook desktop app.
