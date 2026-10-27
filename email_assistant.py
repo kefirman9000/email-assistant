@@ -423,18 +423,42 @@ def github_get(url, timeout=20):
     return urllib.request.urlopen(req, timeout=timeout)
 
 
+def _get_json(url):
+    with github_get(url) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
 def latest_release():
-    """Returns info about the newest release, or None if there isn't one."""
+    """Newest published version: a GitHub release, or failing that a version
+    tag like v1.2.0 (its annotated-tag message is used as the notes).
+    Returns None if nothing has been published."""
+    api = f"https://api.github.com/repos/{UPDATE_REPO}"
+    candidates = []
     try:
-        with github_get(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest") as r:
-            d = json.loads(r.read().decode("utf-8"))
+        d = _get_json(api + "/releases/latest")
+        candidates.append({"version": d["tag_name"].lstrip("vV"),
+                           "notes": (d.get("body") or "").strip(),
+                           "zip_url": d["zipball_url"]})
     except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        raise
-    return {"version": d["tag_name"].lstrip("vV"),
-            "notes": (d.get("body") or "").strip(),
-            "zip_url": d["zipball_url"]}
+        if e.code != 404:
+            raise
+    tags = [t for t in _get_json(api + "/tags?per_page=100")
+            if re.fullmatch(r"[vV]?\d+(\.\d+){0,2}", t.get("name", ""))]
+    if tags:
+        t = max(tags, key=lambda t: parse_version(t["name"]))
+        notes = ""
+        try:
+            ref = _get_json(api + "/git/ref/tags/" + t["name"])
+            if ref["object"]["type"] == "tag":
+                notes = (_get_json(ref["object"]["url"]).get("message") or "").strip()
+        except Exception:
+            pass
+        candidates.append({"version": t["name"].lstrip("vV"), "notes": notes,
+                           "zip_url": t["zipball_url"]})
+    if not candidates:
+        return None
+    # Prefer a release over a bare tag of the same version (it has nicer notes)
+    return max(candidates, key=lambda c: parse_version(c["version"]))
 
 
 def update_check_worker(out, manual):

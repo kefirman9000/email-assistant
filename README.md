@@ -12,7 +12,7 @@ A simple Windows app that reads your unread work email in Outlook, suggests repl
 
 ## First-time setup
 
-1. Download the latest version: on this page click **Releases** → newest release → **Source code (zip)**, then unzip it somewhere like your Documents folder.
+1. Download the app: on this page click **Tags** (or **Releases**) → newest version → **zip**, then unzip it somewhere like your Documents folder.
 2. Double-click **Setup.bat** and wait for "All done!" (the AI download can take a while).
 3. Double-click **Start Email Assistant**.
 4. On the **Settings** tab, fill in your name, check the text that goes before and after every reply, and click **Save settings**.
@@ -41,13 +41,14 @@ The app checks for updates when it starts (and from **Settings → Check for upd
 
 1. Make your changes and bump `APP_VERSION` near the top of `email_assistant.py` (e.g. `"1.1.0"`).
 2. Commit and push to `main`.
-3. Create a GitHub release whose tag matches the version, with notes in plain English (they're shown to the user):
+3. Publish it with a version tag that matches. The tag message is shown to the user as "What's new", so write it in plain English:
    ```
-   gh release create v1.1.0 --title "Version 1.1.0" --notes "Replies now keep your Outlook signature."
+   git tag -a v1.1.0 -m "Replies now keep your Outlook signature."
+   git push origin v1.1.0
    ```
-   or on GitHub: **Releases → Draft a new release**.
+   A GitHub release (**Releases → Draft a new release**) works too; its notes are used instead.
 
-Every copy of the app will offer the update next time it starts. The repository must be **public** so the app can download releases without a GitHub login.
+Every copy of the app will offer the newest version next time it starts. The repository must be **public** so the app can download releases without a GitHub login.
 
 Files that are never committed or overwritten by updates: `settings.json`, `assistant_data.json`, `.installed_version`, `backup/`.
 
