@@ -1,0 +1,8 @@
+# Personal files - never committed, never replaced by updates
+settings.json
+assistant_data.json
+.installed_version
+backup/
+*.tmp
+*.new
+__pycache__/
