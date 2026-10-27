@@ -1,4 +1,4 @@
 {
-  "version": "1.0.0",
-  "notes": "First version of Email Assistant. Suggests replies to simple Outlook emails, lets you edit and approve each one, and installs updates after you confirm."
+  "version": "1.1.0",
+  "notes": "You can now choose which emails to look at: the past 30 minutes, past hour, today, past week and more. You can also include emails you've already read."
 }
