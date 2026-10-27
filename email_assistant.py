@@ -13,6 +13,7 @@ import base64
 import json
 import os
 import queue
+import random
 import re
 import shutil
 import subprocess
@@ -40,7 +41,7 @@ try:
 except ImportError:
     pythoncom = None
 
-APP_VERSION = "2.3.0"                         # bump this for every release
+APP_VERSION = "2.4.0"                         # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 # Microsoft sign-in. IT gives you these two values (see README, "IT setup").
@@ -82,6 +83,18 @@ DEFAULT_SETTINGS = {
     "account": "",          # who is signed in (shown in the window)
     "connection": "microsoft",   # "microsoft" (Graph) or "classic" (Outlook on this PC)
     "theme": "system",           # "system", "light" or "dark"
+    "use_template_default": True,   # add greeting + sign-off to replies by default
+    "quick_replies": [
+        {"text": "Thanks, got it!", "wrap": True},
+        {"text": "Thanks! I'll take a look and get back to you today.", "wrap": True},
+        {"text": "Sounds good, see you then.", "wrap": True},
+        {"text": "Thank you!", "wrap": False},
+    ],
+    "notify": True,                 # Windows notification when new emails need you
+    "notify_urgent_only": False,
+    "send_gap": "20-45 seconds (recommended)",      # pause between sent emails
+    "min_reply_age": "3 minutes (recommended)",     # don't reply instantly
+    "max_per_hour": "30 per hour (recommended)",
 }
 
 AUTOMATED_SENDERS = ["noreply", "no-reply", "donotreply", "do-not-reply",
@@ -181,7 +194,68 @@ def dark_title_bar(win):
         pass
 
 
-AVATAR_COLORS =["#4f46e5", "#0891b2", "#059669", "#d97706", "#db2777", "#7c3aed",
+def show_notification(title, body, wait=False):
+    """Show a Windows notification (bottom-right of the screen) using the
+    PowerShell that comes with Windows. Returns (shown, error_text)."""
+    if sys.platform != "win32":
+        return False, "Notifications are only available on Windows."
+
+    def esc(t):
+        return (t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace('"', "&quot;"))
+    xml = ('<toast><visual><binding template="ToastGeneric">'
+           f'<text>{esc(title)}</text><text>{esc(body)}</text>'
+           '</binding></visual><audio src="ms-winsoundevent:Notification.Mail"/></toast>')
+    ps = ("$ErrorActionPreference='Stop';"
+          "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
+          "ContentType = WindowsRuntime] | Out-Null;"
+          "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, "
+          "ContentType = WindowsRuntime] | Out-Null;"
+          "$x = New-Object Windows.Data.Xml.Dom.XmlDocument;"
+          "$x.LoadXml('" + xml.replace("'", "''") + "');"
+          "$t = New-Object Windows.UI.Notifications.ToastNotification $x;"
+          "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("
+          "'{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'"
+          ").Show($t);")
+    encoded = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
+    cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+           "-WindowStyle", "Hidden", "-EncodedCommand", encoded]
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        if not wait:
+            subprocess.Popen(cmd, creationflags=flags, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+            return True, ""
+        res = subprocess.run(cmd, creationflags=flags, capture_output=True, text=True,
+                             timeout=30)
+        if res.returncode != 0:
+            err = (res.stderr or res.stdout or "").strip().splitlines()
+            return False, (err[0] if err else f"PowerShell exited with {res.returncode}")
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def flash_taskbar(win):
+    """Make the app's taskbar button flash until it's clicked (Windows)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class FLASHWINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.UINT), ("hwnd", wintypes.HWND),
+                        ("dwFlags", wintypes.DWORD), ("uCount", wintypes.UINT),
+                        ("dwTimeout", wintypes.DWORD)]
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+        info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), hwnd, 3 | 12, 0, 0)  # all, until focus
+        ctypes.windll.user32.FlashWindowEx(ctypes.byref(info))
+    except Exception:
+        pass
+
+
+AVATAR_COLORS = ["#4f46e5", "#0891b2", "#059669", "#d97706", "#db2777", "#7c3aed",
                  "#2563eb", "#dc2626", "#0d9488", "#9333ea"]
 
 # Fonts are picked when the window opens (setup_theme): Segoe UI on Windows,
@@ -253,7 +327,15 @@ def fill(template, entry, settings):
         "{my_name}", settings.get("my_name", ""))
 
 
+def uses_template(settings, entry):
+    """Whether this reply gets the greeting and sign-off ("headers")."""
+    v = entry.get("use_template")
+    return bool(settings.get("use_template_default", True)) if v is None else bool(v)
+
+
 def compose(settings, entry, body):
+    if not uses_template(settings, entry):
+        return (body or "").strip()
     parts = [fill(settings["before_text"], entry, settings).strip(),
              (body or "").strip(),
              fill(settings["after_text"], entry, settings).strip()]
@@ -896,6 +978,104 @@ def make_draft(settings, msg_id, text):
     return draft_id
 
 
+# ---------------------------------------------------------------------------
+# Sending pace: replies go out one at a time, like a person would send them
+# ---------------------------------------------------------------------------
+GAP_CHOICES = {"Off": (0, 0), "10-20 seconds": (10, 20),
+               "20-45 seconds (recommended)": (20, 45), "45-90 seconds": (45, 90)}
+AGE_CHOICES = {"Off": 0, "1 minute": 1, "3 minutes (recommended)": 3, "5 minutes": 5,
+               "10 minutes": 10}
+CAP_CHOICES = {"No limit": 0, "10 per hour": 10, "20 per hour": 20,
+               "30 per hour (recommended)": 30, "60 per hour": 60}
+_PACE = {"last": 0.0, "times": []}       # shared by every window in this run
+_PACE_LOCK = threading.Lock()
+
+
+def _received_epoch(entry):
+    try:
+        return datetime.fromisoformat(
+            (entry.get("received_iso") or "").replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+class SendQueue:
+    """Sends replies one at a time in the background, waiting a random pause
+    between emails, never replying to an email that only just arrived, and
+    staying under an hourly limit. Reports progress through the app's events."""
+
+    def __init__(self, events):
+        self.events = events
+        self.q = queue.Queue()
+        self.cancelled = set()
+        self.waiting = []                # ids queued or in progress, in order
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def add(self, entry, full, settings):
+        self.cancelled.discard(entry["id"])
+        self.waiting.append(entry["id"])
+        self.q.put({"entry": dict(entry), "full": full, "settings": dict(settings)})
+
+    def cancel(self, msg_id):
+        self.cancelled.add(msg_id)
+
+    def pending(self):
+        return [i for i in self.waiting if i not in self.cancelled]
+
+    def _limits(self, job):
+        s = job["settings"]
+        lo, hi = GAP_CHOICES.get(s.get("send_gap"), (20, 45))
+        if "_gap" not in job:
+            job["_gap"] = random.uniform(lo, hi)
+        age = AGE_CHOICES.get(s.get("min_reply_age"), 3) * 60
+        cap = CAP_CHOICES.get(s.get("max_per_hour"), 30)
+        now = time.time()
+        with _PACE_LOCK:
+            _PACE["times"] = [t for t in _PACE["times"] if now - t < 3600]
+            waits = [("pause", _PACE["last"] + job["_gap"] - now) if _PACE["last"] else
+                     ("pause", 0)]
+            if age:
+                waits.append(("age", _received_epoch(job["entry"]) + age - now))
+            if cap and len(_PACE["times"]) >= cap:
+                waits.append(("cap", _PACE["times"][0] + 3600 - now))
+        return max(waits, key=lambda w: w[1])
+
+    def _run(self):
+        com_thread_start()
+        while True:
+            job = self.q.get()
+            mid = job["entry"]["id"]
+            try:
+                while mid not in self.cancelled:
+                    reason, wait = self._limits(job)
+                    if wait <= 0:
+                        break
+                    self.events.put(("send_wait", job["entry"], reason, int(wait + 0.999)))
+                    time.sleep(min(wait, 1.0))
+                if mid in self.cancelled:
+                    self.events.put(("send_cancelled", job["entry"]))
+                    continue
+                self.events.put(("send_now", job["entry"]))
+                s = job["settings"]
+                mb = mailbox(s)
+                mb.send_draft(mb.create_reply_draft(mid, job["full"]))
+                mb.mark_replied(mid, s.get("mark_read_after_send", True))
+                with _PACE_LOCK:
+                    _PACE["last"] = time.time()
+                    _PACE["times"].append(_PACE["last"])
+                self.events.put(("sent", job["entry"], None))
+            except Exception as e:
+                self.events.put(("sent", job["entry"], e))
+                if isinstance(e, (SignInNeeded, SetupNeeded)):
+                    # No point trying the rest; cancel everything still waiting
+                    for other in list(self.waiting):
+                        if other != mid:
+                            self.cancelled.add(other)
+            finally:
+                if mid in self.waiting:
+                    self.waiting.remove(mid)
+
+
 def headers_say_automated(msg):
     for h in msg.get("internetMessageHeaders") or []:
         name = (h.get("name") or "").lower()
@@ -1428,6 +1608,18 @@ def setup_theme(root):
                       indicatorbackground=[("selected", ACCENT), ("active", ACCENT_SOFT)],
                       upperbordercolor=[("selected", ACCENT), ("active", ACCENT)],
                       lowerbordercolor=[("selected", ACCENT), ("active", ACCENT)])
+    # Checkboxes with a real checkmark (the built-in style draws an X)
+    try:
+        off, hover, on = _check_images(root, px(16))
+        style.element_create("Modern.Checkbutton.indicator", "image", off,
+                             ("selected", on), ("active", hover))
+        for name in ("TCheckbutton", "Card.TCheckbutton"):
+            style.layout(name, [("Checkbutton.padding", {"sticky": "nswe", "children": [
+                ("Modern.Checkbutton.indicator", {"side": "left", "sticky": ""}),
+                ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [
+                    ("Checkbutton.label", {"sticky": "nswe"})]})]})])
+    except tk.TclError:
+        pass                          # fall back to the built-in look
     style.configure("CardBold.TRadiobutton", background=CARD, foreground=TEXT, font=FONT_B,
                     indicatorbackground=CARD, indicatorforeground=CARD,
                     indicatormargin=(0, 0, px(8), 0), indicatorsize=px(15),
@@ -1451,6 +1643,46 @@ def setup_theme(root):
     root.option_add("*TCombobox*Listbox.background", CARD)
     root.option_add("*TCombobox*Listbox.foreground", TEXT)
     root.configure(bg=BG)
+
+
+_CHECK_IMAGES = []
+
+
+def _check_images(root, size):
+    """Draw unticked / ticked checkbox images in the current palette."""
+    gap = px(8)                       # space between box and label
+
+    def box(fill, border, tick):
+        img = tk.PhotoImage(master=root, width=size + gap, height=size)
+        rows = []
+        for y in range(size):
+            row = []
+            for x in range(size):
+                corner = (x in (0, size - 1)) and (y in (0, size - 1))
+                edge = x in (0, size - 1) or y in (0, size - 1)
+                row.append(None if corner else (border if edge else fill))
+            rows.append(row)
+        if tick:   # a checkmark, two pixels thick
+            pts = [(0.24, 0.52), (0.42, 0.70), (0.77, 0.31)]
+            for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                steps = size * 2
+                for i in range(steps + 1):
+                    x = (ax + (bx - ax) * i / steps) * (size - 1)
+                    y = (ay + (by - ay) * i / steps) * (size - 1)
+                    for dx, dy in ((0, 0), (0, 1), (1, 0), (1, 1)):
+                        xi, yi = int(x) + dx - 1, int(y) + dy - 1
+                        if 0 < xi < size - 1 and 0 < yi < size - 1:
+                            rows[yi][xi] = "#ffffff"
+        for y, row in enumerate(rows):
+            for x, c in enumerate(row):
+                if c:
+                    img.put(c, (x, y))
+        return img
+    off = box(CARD, FIELD_BORDER, False)
+    hover = box(CARD, ACCENT, False)
+    on = box(BTN_PRIMARY, BTN_PRIMARY, True)
+    _CHECK_IMAGES[:] = [off, hover, on]          # keep references alive
+    return off, hover, on
 
 
 def center_window(win, width, height, parent=None):
@@ -1730,6 +1962,7 @@ class EmailAssistant:
         self.signing_in = False
         self.writing = set()
         self.busy_ids = set()
+        self.sender = SendQueue(self.events)
         self._save_job = None
         self._auto_job = None
 
@@ -2115,6 +2348,10 @@ class EmailAssistant:
                      ("skipped", "no_reply", "dismissed") else "Write a reply with AI",
                      lambda e=e: self.rewrite(e, from_needs=True)
                      ).pack(side="left", padx=(px(16), 0))
+                ql = link(acts, "Quick reply", lambda: None)
+                ql.bind("<Button-1>", lambda ev, ql=ql, e=e: self.quick_menu(
+                    ql, lambda qr, e=e: self.use_quick_reply(e, qr)))
+                ql.pack(side="left", padx=(px(16), 0))
             if e.get("reason") and e.get("status") in ("skipped", "no_reply"):
                 tk.Label(acts, text=e["reason"], font=FONT_S, bg=CARD, fg=SUBTLE
                          ).pack(side="right")
@@ -2169,9 +2406,6 @@ class EmailAssistant:
         box.pack(fill="x")
         before = fill(self.settings["before_text"], e, self.settings).strip()
         after = fill(self.settings["after_text"], e, self.settings).strip()
-        if before:
-            tk.Label(box, text=before, font=FONT, bg=EDIT_BG, fg=MUTED, anchor="w",
-                     justify="left").pack(fill="x", pady=(0, px(4)))
         t = tk.Text(box, font=FONT, wrap="word", height=3, bg=EDIT_BG, fg=TEXT,
                     relief="flat", bd=0, highlightthickness=0, padx=0, pady=px(2),
                     undo=True, insertbackground=TEXT, selectbackground=ACCENT_SOFT,
@@ -2181,15 +2415,49 @@ class EmailAssistant:
         t.edit_reset()
         t.pack(fill="x")
         auto_height(t, minimum=2)
-        if after:
-            tk.Label(box, text=after, font=FONT, bg=EDIT_BG, fg=MUTED, anchor="w",
-                     justify="left").pack(fill="x", pady=(px(4), 0))
+        before_lbl = tk.Label(box, text=before, font=FONT, bg=EDIT_BG, fg=MUTED,
+                              anchor="w", justify="left") if before else None
+        after_lbl = tk.Label(box, text=after, font=FONT, bg=EDIT_BG, fg=MUTED,
+                             anchor="w", justify="left") if after else None
+
+        def show_headers():
+            on = uses_template(self.settings, e)
+            for lbl, where in ((before_lbl, dict(before=t, pady=(0, px(4)))),
+                               (after_lbl, dict(after=t, pady=(px(4), 0)))):
+                if lbl is None:
+                    continue
+                if on:
+                    lbl.pack(fill="x", **where)
+                else:
+                    lbl.pack_forget()
+        show_headers()
         t.bind("<FocusIn>", lambda ev: box.configure(highlightbackground=ACCENT), add="+")
         t.bind("<FocusOut>", lambda ev: box.configure(highlightbackground=FIELD_BORDER),
                add="+")
-        tk.Label(card, text="Click the reply to edit it. The greyed greeting and sign-off "
-                            "come from Settings.", font=FONT_S, bg=CARD, fg=SUBTLE,
-                 anchor="w").pack(fill="x", pady=(px(5), 0))
+
+        opts = tk.Frame(card, bg=CARD)
+        opts.pack(fill="x", pady=(px(6), 0))
+        hdr_var = tk.BooleanVar(value=uses_template(self.settings, e))
+
+        def toggle_headers():
+            e["use_template"] = bool(hdr_var.get())
+            show_headers()
+            self.save_soon()
+        ttk.Checkbutton(opts, text="Include greeting and sign-off", variable=hdr_var,
+                        command=toggle_headers, style="Card.TCheckbutton").pack(side="left")
+
+        def apply_quick(qr):
+            t.delete("1.0", "end")
+            t.insert("1.0", qr["text"])
+            e["reply"] = qr["text"]
+            e["use_template"] = bool(qr.get("wrap", True))
+            hdr_var.set(e["use_template"])
+            show_headers()
+            auto_height(t, minimum=2)
+            self.save_soon()
+        qbtn = button(opts, "Quick reply \u25be", None, "ghost", small=True)
+        qbtn.configure(command=lambda: self.quick_menu(qbtn, apply_quick))
+        qbtn.pack(side="right")
 
         def on_change(_evt=None):
             if t.edit_modified():
@@ -2202,7 +2470,7 @@ class EmailAssistant:
         btns = tk.Frame(card, bg=CARD)
         btns.pack(fill="x", pady=(px(14), 0))
         busy = e["id"] in self.busy_ids
-        send_b = button(btns, "Sending..." if busy else "Approve & send",
+        send_b = button(btns, "Waiting to send..." if busy else "Approve & send",
                         lambda: self.send(e, t), "good")
         send_b.pack(side="left")
         writing = e["id"] in self.writing
@@ -2213,7 +2481,11 @@ class EmailAssistant:
         draft_b.pack(side="left", padx=(px(8), 0))
         for b in ([send_b, draft_b] if busy else []) + ([rw] if writing else []):
             b.configure(state="disabled")
-        button(btns, "Don't reply", lambda: self.discard(e), "danger").pack(side="right")
+        if busy:
+            button(btns, "Cancel sending", lambda: self.cancel_send(e), "danger"
+                   ).pack(side="right")
+        else:
+            button(btns, "Don't reply", lambda: self.discard(e), "danger").pack(side="right")
         button(btns, "Needs attention", lambda: self.move_to_needs(e), "ghost"
                ).pack(side="right", padx=(0, px(6)))
 
@@ -2235,6 +2507,10 @@ class EmailAssistant:
             btns.pack(fill="x", pady=(px(14), 0))
             button(btns, "Draft a reply with AI", lambda e=e: self.rewrite(e, from_needs=True),
                    "primary").pack(side="left")
+            qb = button(btns, "Quick reply \u25be", None)
+            qb.configure(command=lambda qb=qb, e=e: self.quick_menu(
+                qb, lambda qr, e=e: self.use_quick_reply(e, qr)))
+            qb.pack(side="left", padx=(px(8), 0))
             button(btns, "Start my own reply", lambda e=e: self.reply_myself(e)
                    ).pack(side="left", padx=(px(8), 0))
             button(btns, "Dismiss", lambda e=e: self.remove(e["id"], "dismissed"), "danger"
@@ -2384,6 +2660,43 @@ class EmailAssistant:
             w.bind("<KeyRelease>", update_preview)
         self.fields["my_name"].trace_add("write", lambda *a: update_preview())
         update_preview()
+        tk.Frame(body, bg=CARD, height=px(8)).pack()
+        check(body, "use_template_default",
+              "Add the greeting and sign-off to replies by default (you can turn it off "
+              "for any single reply)")
+
+        # --- Quick replies
+        body = section("Quick replies", "One-click replies that don't use the AI. Untick "
+                                        "Greeting & sign-off for replies that should be "
+                                        "sent on their own.")
+        self._qr_heading = body
+        self.qr_rows = []
+        qr_list = tk.Frame(body, bg=CARD)
+        qr_list.pack(fill="x")
+
+        def add_row(text="", wrap=True, focus=False):
+            row = tk.Frame(qr_list, bg=CARD)
+            row.pack(fill="x", pady=px(3))
+            item = {"frame": row, "text": tk.StringVar(value=text),
+                    "wrap": tk.BooleanVar(value=wrap)}
+
+            def remove():
+                row.destroy()
+                if item in self.qr_rows:
+                    self.qr_rows.remove(item)
+            button(row, "Remove", remove, "danger", small=True).pack(side="right")
+            ttk.Checkbutton(row, text="Greeting & sign-off", variable=item["wrap"],
+                            style="Card.TCheckbutton").pack(side="right",
+                                                            padx=(px(12), px(10)))
+            ent = field_entry(row, item["text"])
+            ent.pack(side="left", fill="x", expand=True, ipady=px(5))
+            if focus:
+                ent.focus_set()
+            self.qr_rows.append(item)
+        for q in s.get("quick_replies") or []:
+            add_row(q.get("text", ""), q.get("wrap", True))
+        button(body, "+ Add quick reply", lambda: add_row(focus=True), "chip", small=True
+               ).pack(anchor="w", pady=(px(8), 0))
 
         # --- Assistant rules
         body = section("Assistant rules")
@@ -2400,6 +2713,39 @@ class EmailAssistant:
         check(body, "only_direct", "Only suggest replies when I'm on the To line, not just CC'd")
         check(body, "confirm_each_send", "Show the full reply one last time before it's sent")
         check(body, "mark_read_after_send", "Mark the original email as read after I reply")
+
+        # --- Notifications
+        body = section("Notifications", "A Windows notification appears when a check finds "
+                                        "new emails that need you, even while Email "
+                                        "Assistant is minimized. Its taskbar button flashes "
+                                        "too.")
+        check(body, "notify", "Notify me when new emails need me")
+        check(body, "notify_urgent_only", "Only for urgent emails")
+        self.notify_test_btn = button(body, "Send a test notification",
+                                      self.test_notification)
+        self.notify_test_btn.pack(anchor="w", pady=(px(10), 0))
+
+        # --- Sending pace
+        body = section("Sending pace", "Replies go out one at a time, the way a person would "
+                                       "send them, so nothing looks like it came from a bot.")
+
+        def combo(key, label, choices):
+            row = tk.Frame(body, bg=CARD)
+            row.pack(fill="x", pady=px(4))
+            tk.Label(row, text=label, font=FONT, bg=CARD, fg=TEXT, anchor="w",
+                     width=30).pack(side="left")
+            val = s.get(key) if s.get(key) in choices else DEFAULT_SETTINGS[key]
+            v = tk.StringVar(value=val)
+            ttk.Combobox(row, textvariable=v, values=list(choices), state="readonly",
+                         width=28, font=FONT).pack(side="left")
+            self.fields[key] = v
+        combo("send_gap", "Pause between sent emails", GAP_CHOICES)
+        combo("min_reply_age", "Don't reply sooner than", AGE_CHOICES)
+        combo("max_per_hour", "Send at most", CAP_CHOICES)
+        tk.Label(body, text="The pause is a random length within the range you choose. "
+                            "\"Don't reply sooner than\" counts from when the email arrived.",
+                 font=FONT_S, bg=CARD, fg=MUTED, anchor="w", justify="left",
+                 wraplength=px(760)).pack(fill="x", pady=(px(6), 0))
 
         # --- Appearance
         body = section("Appearance")
@@ -2441,6 +2787,10 @@ class EmailAssistant:
         except ValueError:
             new["auto_check_minutes"] = 0
         new["model"] = (new["model"] or "").strip() or DEFAULT_SETTINGS["model"]
+        if getattr(self, "qr_rows", None) is not None:
+            new["quick_replies"] = [{"text": r["text"].get().strip(),
+                                     "wrap": bool(r["wrap"].get())}
+                                    for r in self.qr_rows if r["text"].get().strip()]
         if sign_in_ids(new) != sign_in_ids(self.settings):
             new["account"] = ""          # different Microsoft app/tenant: sign in again
         self.settings = new
@@ -2463,6 +2813,76 @@ class EmailAssistant:
         self.build_settings()
         self.render()
         self.set_status("Settings reset to defaults.")
+
+    # ----- notifications -----
+    def window_is_active(self):
+        try:
+            return (self.root.state() != "iconic"
+                    and self.root.focus_displayof() is not None)
+        except (KeyError, tk.TclError):
+            return False
+
+    def maybe_notify(self):
+        """After a check: tell the user about new emails that need them."""
+        found = list(getattr(self, "_new_found", []))
+        self._new_found = []
+        if not self.settings.get("notify", True) or not found:
+            return
+        if self.settings.get("notify_urgent_only"):
+            found = [f for f in found if f[1].get("importance") == "high"]
+            if not found:
+                return
+        if self.window_is_active():
+            return                      # they're already looking at the app
+        replies = sum(1 for c, _ in found if c == "simple")
+        needs = len(found) - replies
+        urgent = [e for _, e in found if e.get("importance") == "high"]
+        if urgent:
+            title = (f"Urgent email from {urgent[0]['from']}" if len(urgent) == 1
+                     else f"{len(urgent)} urgent emails")
+        else:
+            title = f"{len(found)} new email{'s' if len(found) != 1 else ''} to review"
+        parts = []
+        if replies:
+            parts.append(f"{replies} suggested repl{'y' if replies == 1 else 'ies'} ready")
+        if needs:
+            parts.append(f"{needs} need{'s' if needs == 1 else ''} your attention")
+        names = []
+        for _, e in found:
+            n = e["from"]
+            if "," in n:                                   # "Smith, Jennifer"
+                last, first = [x.strip() for x in n.split(",", 1)]
+                n = f"{first} {last}"
+            if n not in names:
+                names.append(n)
+        shown = names[:3] + ([f"{len(names) - 3} more"] if len(names) > 3 else [])
+        who = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+        body = " and ".join(parts).capitalize() + f". From {who}."
+        self.last_notification = (title, body)
+        threading.Thread(target=show_notification, args=(title, body), daemon=True).start()
+        flash_taskbar(self.root)
+
+    def test_notification(self):
+        self.notify_test_btn.configure(state="disabled", text="Sending...")
+
+        def done(res, err):
+            try:
+                self.notify_test_btn.configure(state="normal", text="Send a test notification")
+            except tk.TclError:
+                pass
+            ok, why = res if res else (False, str(err))
+            if ok:
+                self.set_status("Test notification sent. It should appear in the "
+                                "bottom-right corner of your screen.")
+            else:
+                messagebox.showwarning("Notifications",
+                                       "Windows didn't show the notification.\n\n"
+                                       "Check that notifications are turned on in Windows "
+                                       "Settings > System > Notifications. Your company may "
+                                       f"also block them.\n\n(Details: {why})")
+        self.run_bg(lambda: show_notification(
+            "Email Assistant", "Notifications are working. You'll see one like this when "
+                               "new emails need you.", wait=True), done)
 
     # ----- appearance -----
     def switch_theme(self, choice):
@@ -2513,6 +2933,7 @@ class EmailAssistant:
         self.remember_check_options()
         self.checking = True
         self.auto_running = auto
+        self._new_found = []                   # new emails from this check, for notifying
         if self._auto_job:                     # the timer restarts after this check
             self.root.after_cancel(self._auto_job)
             self._auto_job = None
@@ -2602,26 +3023,7 @@ class EmailAssistant:
                 "Send this reply?",
                 f"To: {e['from']} <{e['address']}>\nSubject: RE: {e['subject']}\n\n{full}"):
             return
-        self.busy_ids.add(e["id"])
-        self.render()
-        self.set_status(f"Sending your reply to {e['from']}...")
-        settings = dict(self.settings)
-
-        def work():
-            g = mailbox(settings)
-            g.send_draft(g.create_reply_draft(e["id"], full))
-            g.mark_replied(e["id"], settings["mark_read_after_send"])
-
-        def done(_res, err):
-            self.busy_ids.discard(e["id"])
-            if err:
-                self.render()
-                self.set_status("The reply was not sent.")
-                self.show_error(err, "Couldn't send")
-                return
-            self.set_status(f"Sent your reply to {e['from']}.")
-            self.remove(e["id"], "replied")
-        self.run_bg(work, done)
+        self.queue_send([(e, full)])
 
     def send_all(self):
         items = [x for x in self.data["suggested"] if x["id"] not in self.busy_ids]
@@ -2629,49 +3031,57 @@ class EmailAssistant:
             return
         names = "\n".join(f"  - {e['from']}: {e['subject'][:50]}" for e in items[:15])
         more = f"\n  ...and {len(items) - 15} more" if len(items) > 15 else ""
+        lo, hi = GAP_CHOICES.get(self.settings.get("send_gap"), (20, 45))
+        pace = (f"\n\nThey'll go out one at a time, {lo}-{hi} seconds apart, so they look "
+                "like you sent them yourself." if hi else "")
         if not messagebox.askyesno("Send all replies?",
                                    f"Send all {len(items)} replies exactly as shown?\n\n"
-                                   f"{names}{more}"):
+                                   f"{names}{more}{pace}"):
             return
-        settings = dict(self.settings)
-        jobs = [(e["id"], compose(settings, e, e["reply"])) for e in items]
-        self.busy_ids.update(i for i, _ in jobs)
+        self.queue_send([(e, compose(self.settings, e, e["reply"])) for e in items])
+
+    def queue_send(self, jobs):
+        for e, full in jobs:
+            self.busy_ids.add(e["id"])
+            self.sender.add(e, full, self.settings)
         self.render()
-        self.set_status(f"Sending {len(jobs)} replies...")
+        n = len(self.sender.pending())
+        self.set_status(f"Sending your reply to {jobs[0][0]['from']}..." if n == 1 else
+                        f"{n} replies are queued and will go out one at a time.")
 
-        def work():
-            g = mailbox(settings)
-            sent, failed = [], []
-            for mid, full in jobs:
-                try:
-                    g.send_draft(g.create_reply_draft(mid, full))
-                    g.mark_replied(mid, settings["mark_read_after_send"])
-                    sent.append(mid)
-                except (SignInNeeded, SetupNeeded):
-                    raise
-                except Exception as ex:
-                    failed.append((mid, friendly_error(ex)))
-            return sent, failed
+    def cancel_send(self, e):
+        self.sender.cancel(e["id"])
+        self.set_status(f"Cancelling the reply to {e['from']}...")
 
-        def done(res, err):
-            self.busy_ids.difference_update(i for i, _ in jobs)
+    def on_send_event(self, ev):
+        kind, entry = ev[0], ev[1]
+        more = len(self.sender.pending()) - 1
+        tail = f" {more} more waiting." if more > 0 else ""
+        if kind == "send_wait":
+            reason, secs = ev[2], ev[3]
+            when = f"{secs} s" if secs < 90 else f"{(secs + 59) // 60} min"
+            why = {"pause": "pausing between emails so they look hand-sent",
+                   "age": "their email only just arrived, and instant replies look "
+                          "automated",
+                   "cap": "you've reached your hourly sending limit"}.get(reason, "")
+            self.set_status(f"Reply to {entry['from']} goes out in {when} ({why}).{tail}")
+        elif kind == "send_now":
+            self.set_status(f"Sending your reply to {entry['from']}...{tail}")
+        elif kind == "send_cancelled":
+            self.busy_ids.discard(entry["id"])
+            self.render()
+            self.set_status(f"Didn't send the reply to {entry['from']}. It's still in "
+                            f"Suggested replies.{tail}")
+        elif kind == "sent":
+            err = ev[2]
+            self.busy_ids.discard(entry["id"])
             if err:
                 self.render()
+                self.set_status(f"The reply to {entry['from']} was not sent.{tail}")
                 self.show_error(err, "Couldn't send")
                 return
-            sent, failed = res
-            self.data["suggested"] = [x for x in self.data["suggested"] if x["id"] not in sent]
-            for mid in sent:
-                self.set_inbox_status(mid, "replied")
-            self.save_now()
-            self.render()
-            self.set_status(f"Sent {len(sent)} of {len(jobs)} replies.")
-            if failed:
-                messagebox.showwarning("Some replies weren't sent",
-                                       f"{len(failed)} repl{'y' if len(failed) == 1 else 'ies'} "
-                                       f"couldn't be sent and are still in the list.\n\n"
-                                       f"{failed[0][1]}")
-        self.run_bg(work, done)
+            self.set_status(f"Sent your reply to {entry['from']}.{tail}")
+            self.remove(entry["id"], "replied")
 
     def save_draft(self, e, t):
         full = compose(self.settings, e, t.get("1.0", "end").strip())
@@ -2694,7 +3104,7 @@ class EmailAssistant:
 
     def reply_myself(self, e):
         settings = dict(self.settings)
-        text = compose(settings, e, " ")
+        text = compose(settings, dict(e, use_template=True), " ")
 
         def done(_res, err):
             if err:
@@ -2770,6 +3180,44 @@ class EmailAssistant:
                        + friendly_error(err) + ")")
             txt.configure(state="disabled")
         self.run_bg(lambda: mailbox(settings).message_body(e["id"]).strip(), done)
+
+    # ----- quick replies -----
+    def quick_menu(self, anchor, on_pick):
+        """Pop up the list of saved quick replies under a button or link."""
+        menu = tk.Menu(self.root, tearoff=0, bg=CARD, fg=TEXT, activebackground=ACCENT_SOFT,
+                       activeforeground=TEXT, font=FONT, bd=0, relief="flat",
+                       activeborderwidth=0)
+        replies = [q for q in self.settings.get("quick_replies") or [] if q.get("text")]
+        if not replies:
+            menu.add_command(label="No quick replies yet", state="disabled")
+        for q in replies:
+            text = q["text"] if len(q["text"]) <= 60 else q["text"][:57] + "..."
+            menu.add_command(label=("  " + text + ("" if q.get("wrap", True)
+                                                   else "   (no greeting or sign-off)")),
+                             command=lambda q=q: on_pick(q))
+        menu.add_separator()
+        menu.add_command(label="  Edit quick replies...", command=self.edit_quick_replies)
+        try:
+            menu.tk_popup(anchor.winfo_rootx(), anchor.winfo_rooty() + anchor.winfo_height())
+        finally:
+            menu.grab_release()
+
+    def use_quick_reply(self, e, qr):
+        """Use a quick reply for an email that has no suggested reply yet."""
+        self.events.put(("write_done", e["id"], qr["text"], None,
+                         {"use_template": bool(qr.get("wrap", True))}))
+        self.set_status(f"Quick reply ready for {e['from']}. Review it, then approve "
+                        "and send.")
+
+    def edit_quick_replies(self):
+        self.tabs.select(self.set_tab)
+        lbl = getattr(self, "_qr_heading", None)
+        if lbl is None:
+            return
+        self.root.update_idletasks()
+        y = lbl.winfo_rooty() - self.set_area.inner.winfo_rooty() - px(20)
+        h = max(1, self.set_area.inner.winfo_height())
+        self.set_area.canvas.yview_moveto(max(0.0, y / h))
 
     def discard(self, e):
         if messagebox.askyesno("Email Assistant",
@@ -2864,8 +3312,9 @@ class EmailAssistant:
         def show_options(options):
             for w in cards.winfo_children():
                 w.destroy()
-            before = fill(self.settings["before_text"], e, self.settings).strip()
-            after = fill(self.settings["after_text"], e, self.settings).strip()
+            on = uses_template(self.settings, e)
+            before = fill(self.settings["before_text"], e, self.settings).strip() if on else ""
+            after = fill(self.settings["after_text"], e, self.settings).strip() if on else ""
             for col, opt in enumerate(options):
                 outer = tk.Frame(cards, bg=BORDER)
                 outer.grid(row=0, column=col, sticky="nsew",
@@ -3039,7 +3488,9 @@ class EmailAssistant:
             while True:
                 ev = self.events.get_nowait()
                 kind = ev[0]
-                if kind == "bg":
+                if kind in ("send_wait", "send_now", "send_cancelled", "sent"):
+                    self.on_send_event(ev)
+                elif kind == "bg":
                     _, done, res, err = ev
                     done(res, err)
                 elif kind.startswith("update_"):
@@ -3056,6 +3507,8 @@ class EmailAssistant:
                     self.mark_processed(entry["id"])
                     self.add_to_inbox(entry, cat)
                     lst, _old = self.find(entry["id"])
+                    if lst is None and cat in ("simple", "needs_you"):
+                        self._new_found.append((cat, entry))
                     if lst is None:
                         if cat == "simple":
                             self.data["suggested"].append(entry)
@@ -3064,6 +3517,7 @@ class EmailAssistant:
                     changed = True
                 elif kind == "done":
                     c = ev[1]
+                    self.maybe_notify()
                     if self.auto_running:
                         new = c["simple"] + c["needs_you"]
                         when = datetime.now().strftime('%I:%M %p').lstrip('0')
@@ -3100,7 +3554,8 @@ class EmailAssistant:
                     self.finish_check("Check stopped.")
                     messagebox.showwarning("Email Assistant", ev[1])
                 elif kind == "write_done":
-                    _, eid, reply, err = ev
+                    _, eid, reply, err = ev[:4]
+                    extra = ev[4] if len(ev) > 4 else {}
                     self.writing.discard(eid)
                     lst, entry = self.find(eid)
                     if entry is None:
@@ -3113,6 +3568,7 @@ class EmailAssistant:
                         self.set_status("")
                     elif entry is not None:
                         entry["reply"] = reply
+                        entry.update(extra)
                         self.set_inbox_status(eid, "simple")
                         if lst == "inbox":
                             self.data["suggested"].insert(0, entry)
@@ -3148,6 +3604,13 @@ class EmailAssistant:
         self._poll_job = self._auto_job = self._save_job = None
 
     def on_close(self):
+        left = self.sender.pending()
+        if left and not messagebox.askyesno(
+                "Replies still waiting",
+                f"{len(left)} repl{'y is' if len(left) == 1 else 'ies are'} still waiting to "
+                "be sent. If you close now, they won't be sent (they'll stay in Suggested "
+                "replies for next time).\n\nClose anyway?"):
+            return
         if self._save_job:
             self.save_now()
         self.stop_timers()

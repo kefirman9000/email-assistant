@@ -14,28 +14,17 @@ It can connect two ways (choose under **Settings → Connection**):
 
 ## Screenshots
 
-**Inbox**: every email from your checks, with urgency and what the assistant decided.
+**Inbox**: every email from your checks, with its urgency and what the assistant decided.
 
 ![Inbox](docs/screenshots/inbox.png)
 
-**Suggested replies**: review, edit, then approve and send.
-
-![Suggested replies](docs/screenshots/suggested-replies.png)
-
-**Reply picker**: two options side by side; pick a vibe like *Friendly denial* to get two more.
+**Reply picker**: two AI replies side by side. Pick a vibe like *Friendly denial* to get two new options in that style.
 
 ![Reply picker](docs/screenshots/reply-picker.png)
 
-**Dark mode**
+**Suggested replies**: edit, choose whether to include your greeting and sign-off, use a quick reply, then approve and send.
 
-![Dark mode](docs/screenshots/dark-mode.png)
-
-<table>
-<tr>
-<td width="50%"><b>Email viewer</b><br><img src="docs/screenshots/email-viewer.png" alt="Email viewer"></td>
-<td width="50%"><b>Settings</b><br><img src="docs/screenshots/settings.png" alt="Settings"></td>
-</tr>
-</table>
+![Suggested replies](docs/screenshots/suggested-replies.png)
 
 ## What you need
 
@@ -66,6 +55,8 @@ Tip: right-click *Start Email Assistant* → *Send to* → *Desktop (create shor
    - Click in the white box to **edit the reply** (the grey greeting and sign-off are added automatically)
    - **Approve & send** (you'll see the full reply one more time before it goes)
    - **Rewrite with AI**: shows **two different replies** side by side. Click a vibe (*Happier, More frank, Friendly acceptance, Friendly denial, More formal, More casual, Shorter, Apologetic, Ask for details*) for two new options in that style, or describe what you want (e.g. "say yes but suggest 3pm"). Edit either one, then click **Use this reply**
+   - **Quick reply** to drop in a saved one-click reply (no AI), like "Thanks, got it!"
+   - Untick **Include greeting and sign-off** to send just the reply text
    - **Save as draft** to finish it in Outlook
    - **Needs attention** to move it to the other list, or **Don't reply**
 4. **Needs your attention** lists emails the assistant couldn't safely answer. Click **Draft a reply with AI** to choose between AI options the same way, or **Start my own reply**.
@@ -97,30 +88,6 @@ Tip: right-click *Start Email Assistant* → *Send to* → *Desktop (create shor
 
 Conditional Access and MFA apply to sign-in as normal. Users can revoke access at any time from <https://myapps.microsoft.com>, and admins can remove the app registration.
 
----
-
-## For the maintainer
-
-### Publishing an update
-
-Work happens on `main`. Whatever is on the **`stable`** branch is what users get.
-
-1. Make your changes on `main`.
-2. Edit `version.json`: raise `version` (e.g. `"2.1.0"`) and write `notes` in plain English. The notes are shown to the user as "What's new".
-3. Commit, then publish by updating `stable`:
-   ```
-   git push origin main
-   git push origin main:stable
-   ```
-
-Every copy of the app will offer the new version the next time it starts. A version tag (`v2.1.0`) or a GitHub release also works; the app picks whichever source has the highest version. The repository must be **public** so the app can download updates without a GitHub login.
-
-### Skipping the client ID step for users
-
-If everyone uses the same app registration, put its client ID in `DEFAULT_CLIENT_ID` near the top of `email_assistant.py` (and the tenant ID in `DEFAULT_TENANT`). The App ID box then disappears from Settings.
-
-Files that are never committed or overwritten by updates: `settings.json`, `assistant_data.json`, `signin_cache.bin`, `.installed_version`, `backup/`. The sign-in cache is encrypted with Windows DPAPI (or the macOS Keychain).
-
 ## Settings reference
 
 | Setting | What it does |
@@ -129,5 +96,8 @@ Files that are never committed or overwritten by updates: `settings.json`, `assi
 | Reply template | Greeting and sign-off wrapped around every suggestion. `{first_name}` = sender's first name, `{my_name}` = your name. Live preview included |
 | Rules for the assistant | Extra do's and don'ts for the AI |
 | Never suggest replies to these senders | Addresses or partial matches (e.g. `@vendor.com`) to always skip |
+| Quick replies | Your saved one-click replies. Each has its own **Greeting & sign-off** switch |
+| Notifications | A Windows notification (and a flashing taskbar button) when a check finds new emails that need you. Option for urgent emails only, plus a **Send a test notification** button |
+| Sending pace | Replies go out one at a time with a random pause between them, never within a few minutes of an email arriving, and up to an hourly limit, so they look hand-sent rather than automated |
 | Appearance | **Match Windows**, **Light** or **Dark**. There's also a quick Dark mode / Light mode switch at the top of the window |
 | AI model name | Any model pulled in Ollama (default `llama3.1:8b`) |

@@ -1,4 +1,4 @@
 {
-  "version": "2.3.0",
-  "notes": "A fresh new look: sharper text on high-resolution screens, rounded buttons, colourful sender avatars, cleaner email cards and a tidier Settings page with a Save bar that's always visible.\n\nNew: Dark mode (Settings > Appearance, or the switch at the top), auto-refresh every 5 to 60 minutes, and windows that open in the middle of the screen."
+  "version": "2.4.0",
+  "notes": "New: Quick replies. Saved one-click replies like 'Thanks, got it!', with a switch for whether to add your greeting and sign-off. You can also turn the greeting and sign-off off for any single reply.\n\nNew: Notifications. A Windows notification when a check finds emails that need you, even while the app is minimized.\n\nNew: Sending pace. Replies go out one at a time with a natural pause between them, never instantly after an email arrives, and up to an hourly limit, so nothing looks automated. You can cancel a reply while it's waiting.\n\nAlso: proper checkmarks in checkboxes."
 }
