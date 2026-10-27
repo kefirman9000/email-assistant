@@ -35,15 +35,15 @@ Tip: right-click *Start Email Assistant* → *Send to* → *Desktop (create shor
 
 ## Everyday use
 
-1. Pick a time range under **Look at emails from** (past 30 minutes, past hour, today, past week...). Tick **Include emails I've already read** to look at read ones too. Then click **Check emails**.
-2. The **Inbox** tab (the start screen) lists every email from your checks, with its urgency and what the assistant decided. You can **View email** right in the app, **Open in Outlook**, or **Write a reply with AI**, even for emails the assistant skipped.
+1. Pick a time range under **Show emails from** (past 30 minutes, past hour, today, past week...). Tick **Include read emails** to look at read ones too. Then click **Check emails**. To check automatically, pick an interval under **Auto-refresh** (every 5, 10, 15 or 30 minutes, or every hour).
+2. The **Inbox** tab (the start screen) lists every email from your checks, with its urgency and what the assistant decided. You can **View** an email right in the app, **Open in Outlook**, or **Write a reply with AI**, even for emails the assistant skipped.
 3. On **Suggested replies**, for each email you can:
    - Click in the white box to **edit the reply** (the grey greeting and sign-off are added automatically)
    - **Approve & send** (you'll see the full reply one more time before it goes)
    - **Rewrite with AI**: shows **two different replies** side by side. Click a vibe (*Happier, More frank, Friendly acceptance, Friendly denial, More formal, More casual, Shorter, Apologetic, Ask for details*) for two new options in that style, or describe what you want (e.g. "say yes but suggest 3pm"). Edit either one, then click **Use this reply**
-   - **Save as Outlook draft** to finish it in Outlook
-   - **Move to 'needs attention'** or **Don't reply**
-4. **Needs your attention** lists emails the assistant couldn't safely answer. Click **Have AI draft a reply** to choose between AI options the same way, or **Start a reply in Outlook Drafts**.
+   - **Save as draft** to finish it in Outlook
+   - **Needs attention** to move it to the other list, or **Don't reply**
+4. **Needs your attention** lists emails the assistant couldn't safely answer. Click **Draft a reply with AI** to choose between AI options the same way, or **Start my own reply**.
 
 ## Updates
 
@@ -104,5 +104,5 @@ Files that are never committed or overwritten by updates: `settings.json`, `assi
 | Reply template | Greeting and sign-off wrapped around every suggestion. `{first_name}` = sender's first name, `{my_name}` = your name. Live preview included |
 | Rules for the assistant | Extra do's and don'ts for the AI |
 | Never suggest replies to these senders | Addresses or partial matches (e.g. `@vendor.com`) to always skip |
-| Auto-check every (minutes) | `0` = only when you click the button |
+| Appearance | **Match Windows**, **Light** or **Dark**. There's also a quick Dark mode / Light mode switch at the top of the window |
 | AI model name | Any model pulled in Ollama (default `llama3.1:8b`) |

@@ -40,7 +40,7 @@ try:
 except ImportError:
     pythoncom = None
 
-APP_VERSION = "2.2.0"                         # bump this for every release
+APP_VERSION = "2.3.0"                         # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 # Microsoft sign-in. IT gives you these two values (see README, "IT setup").
@@ -81,6 +81,7 @@ DEFAULT_SETTINGS = {
     "tenant_id": "",
     "account": "",          # who is signed in (shown in the window)
     "connection": "microsoft",   # "microsoft" (Graph) or "classic" (Outlook on this PC)
+    "theme": "system",           # "system", "light" or "dark"
 }
 
 AUTOMATED_SENDERS = ["noreply", "no-reply", "donotreply", "do-not-reply",
@@ -109,20 +110,100 @@ TIME_RANGES = [
 ]
 DEFAULT_RANGE = "Past 24 hours"
 
-# Colors / fonts
-BG = "#f3f4f6"
-CARD = "#ffffff"
-BORDER = "#d1d5db"
-TEXT = "#111827"
-MUTED = "#6b7280"
-ACCENT = "#2563eb"
-GOOD = "#15803d"
-DANGER = "#b91c1c"
-EDIT_BG = "#fffbea"
-FONT = ("Segoe UI", 10)
-FONT_B = ("Segoe UI", 10, "bold")
-FONT_S = ("Segoe UI", 9)
-FONT_H = ("Segoe UI", 13, "bold")
+# Colour palettes. Every colour in the window comes from these names, so the
+# whole app can switch between light and dark.
+LIGHT = dict(
+    BG="#f5f6f8", CARD="#ffffff", BORDER="#e6e8ec", FIELD_BORDER="#d4d7dd",
+    TEXT="#111827", MUTED="#6b7280", SUBTLE="#9ca3af",
+    ACCENT="#4f46e5", ACCENT_HOVER="#4338ca", ACCENT_SOFT="#eef2ff",
+    BTN_PRIMARY="#4f46e5", BTN_PRIMARY_HOVER="#4338ca", BTN_PRIMARY_OFF="#a5b4fc",
+    GOOD="#16a34a", GOOD_HOVER="#15803d", GOOD_OFF="#86efac",
+    DANGER="#dc2626", DANGER_SOFT="#fef2f2", DANGER_BORDER="#f3c4c4",
+    EDIT_BG="#f9fafb", HOVER="#f3f4f6", TAB_HOVER="#eceef2",
+    CHIP_ON_HOVER="#e0e7ff", CHIP_ON_BORDER="#c7d2fe",
+    SCROLL="#c9cdd4", SCROLL_HOVER="#a9aeb8", URGENT="#dc2626",
+    B_GREEN=("#166534", "#dcfce7"), B_ORANGE=("#9a3412", "#ffedd5"),
+    B_BLUE=("#1e40af", "#dbeafe"), B_PURPLE=("#6d28d9", "#ede9fe"),
+    B_GRAY=("#475569", "#f1f5f9"), B_RED=("#991b1b", "#fee2e2"),
+)
+DARK = dict(
+    BG="#0f1115", CARD="#181b21", BORDER="#262a33", FIELD_BORDER="#363b46",
+    TEXT="#e6e8ec", MUTED="#9aa1ad", SUBTLE="#6b7280",
+    ACCENT="#8b93f8", ACCENT_HOVER="#a5acfb", ACCENT_SOFT="#1f2245",
+    BTN_PRIMARY="#5b5ff0", BTN_PRIMARY_HOVER="#6d71f5", BTN_PRIMARY_OFF="#33366b",
+    GOOD="#1f9d55", GOOD_HOVER="#22b462", GOOD_OFF="#1c4a31",
+    DANGER="#f87171", DANGER_SOFT="#2a1416", DANGER_BORDER="#5b2326",
+    EDIT_BG="#1f232b", HOVER="#232731", TAB_HOVER="#1c2027",
+    CHIP_ON_HOVER="#272b58", CHIP_ON_BORDER="#3f4485",
+    SCROLL="#3a3f4b", SCROLL_HOVER="#4c5262", URGENT="#ef4444",
+    B_GREEN=("#86efac", "#13301f"), B_ORANGE=("#fdba74", "#3a2414"),
+    B_BLUE=("#93c5fd", "#172440"), B_PURPLE=("#c4b5fd", "#2a1f47"),
+    B_GRAY=("#cbd5e1", "#262a33"), B_RED=("#fca5a5", "#3b1618"),
+)
+THEMES = [("Match Windows", "system"), ("Light", "light"), ("Dark", "dark")]
+globals().update(LIGHT)
+DARK_MODE = False
+
+
+def windows_prefers_dark():
+    try:
+        import winreg
+        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                           r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        val, _ = winreg.QueryValueEx(k, "AppsUseLightTheme")
+        winreg.CloseKey(k)
+        return val == 0
+    except Exception:
+        return False
+
+
+def apply_palette(choice):
+    """Switch every colour name to the light or dark palette."""
+    global DARK_MODE
+    DARK_MODE = choice == "dark" or (choice == "system" and windows_prefers_dark())
+    globals().update(DARK if DARK_MODE else LIGHT)
+
+
+def dark_title_bar(win):
+    """Ask Windows 10/11 to draw this window's title bar dark (or light)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        win.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+        on = ctypes.c_int(1 if DARK_MODE else 0)
+        for attr in (20, 19):          # DWMWA_USE_IMMERSIVE_DARK_MODE (new, old)
+            if ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr, ctypes.byref(on), ctypes.sizeof(on)) == 0:
+                break
+    except Exception:
+        pass
+
+
+AVATAR_COLORS =["#4f46e5", "#0891b2", "#059669", "#d97706", "#db2777", "#7c3aed",
+                 "#2563eb", "#dc2626", "#0d9488", "#9333ea"]
+
+# Fonts are picked when the window opens (setup_theme): Segoe UI on Windows,
+# with sensible fallbacks elsewhere. These are placeholders until then.
+FAMILY = "Segoe UI"
+FONT = (FAMILY, 10)
+FONT_B = (FAMILY, 10, "bold")
+FONT_S = (FAMILY, 9)
+FONT_H = (FAMILY, 12, "bold")
+FONT_TITLE = (FAMILY, 14, "bold")
+FONT_BADGE = (FAMILY, 8, "bold")
+SCALE = 1.0               # screen DPI / 96, set in setup_theme
+
+
+def px(n):
+    """A size in pixels at 96 DPI, scaled for this screen."""
+    return int(round(n * SCALE))
+
+
+# Auto-refresh choices (label -> minutes; 0 = off)
+REFRESH_CHOICES = [("Off", 0), ("Every 5 minutes", 5), ("Every 10 minutes", 10),
+                   ("Every 15 minutes", 15), ("Every 30 minutes", 30), ("Every hour", 60)]
 
 
 def range_cutoff(label):
@@ -998,6 +1079,11 @@ def check_worker(settings, processed, out):
         _, me = g.me()
         ignored = ignored_list(settings)
         cutoff = range_cutoff(settings.get("check_range"))
+        # An automatic refresh always looks back at least as far as the last check,
+        # so nothing is missed if the time range is shorter than the refresh interval
+        min_hours = float(settings.get("_min_lookback_hours") or 0)
+        if min_hours:
+            cutoff = min(cutoff, datetime.now() - timedelta(hours=min_hours))
         counts = {"simple": 0, "needs_you": 0, "no_reply": 0, "skipped": 0,
                   "capped": False}
         n = 0
@@ -1269,14 +1355,298 @@ def install_worker(info, out):
 # ---------------------------------------------------------------------------
 # UI building blocks
 # ---------------------------------------------------------------------------
+def setup_theme(root):
+    """Pick fonts, measure screen DPI and style the ttk widgets."""
+    global FAMILY, FONT, FONT_B, FONT_S, FONT_H, FONT_TITLE, FONT_BADGE, SCALE
+    import tkinter.font as tkfont
+    try:
+        SCALE = max(1.0, root.winfo_fpixels("1i") / 96.0)
+    except Exception:
+        SCALE = 1.0
+    fams = set(tkfont.families(root))
+    for f in ("Segoe UI Variable Text", "Segoe UI", "Inter", "SF Pro Text",
+              "Helvetica Neue", "Helvetica", "Arial"):
+        if f in fams:
+            FAMILY = f
+            break
+    semi = next((f for f in ("Segoe UI Semibold", "Segoe UI Variable Text Semibold",
+                             "Inter SemiBold") if f in fams), None)
+    FONT = (FAMILY, 10)
+    FONT_S = (FAMILY, 9)
+    FONT_B = (semi, 10) if semi else (FAMILY, 10, "bold")
+    FONT_H = (semi, 12) if semi else (FAMILY, 12, "bold")
+    FONT_TITLE = (semi, 14) if semi else (FAMILY, 14, "bold")
+    FONT_BADGE = (semi, 8) if semi else (FAMILY, 8, "bold")
+    for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
+        try:
+            tkfont.nametofont(name).configure(family=FAMILY, size=10)
+        except tk.TclError:
+            pass
+    root.option_add("*TCombobox*Listbox.font", FONT)
+    root.option_add("*TCombobox*Listbox.selectBackground", ACCENT_SOFT)
+    root.option_add("*TCombobox*Listbox.selectForeground", TEXT)
+    root.option_add("*TCombobox*Listbox.background", CARD)
+    root.option_add("*TCombobox*Listbox.relief", "flat")
+
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except tk.TclError:
+        pass
+    style.configure(".", font=FONT, background=BG, foreground=TEXT)
+    # Tabs
+    style.configure("TNotebook", background=BG, borderwidth=1, bordercolor=BORDER,
+                    lightcolor=BG, darkcolor=BG, tabmargins=(px(16), px(4), px(16), 0))
+    style.configure("TNotebook.Tab", font=FONT_B, padding=(px(16), px(9)), background=BG,
+                    foreground=MUTED, borderwidth=0, lightcolor=BG, darkcolor=BG,
+                    bordercolor=BG, focuscolor=BG)
+    style.map("TNotebook.Tab",
+              background=[("selected", CARD), ("active", TAB_HOVER)],
+              foreground=[("selected", ACCENT), ("active", TEXT)],
+              lightcolor=[("selected", CARD)], bordercolor=[("selected", CARD)])
+    # Dropdowns
+    style.configure("TCombobox", padding=(px(8), px(5)), arrowsize=px(12),
+                    fieldbackground=CARD, background=CARD, foreground=TEXT,
+                    bordercolor=FIELD_BORDER, lightcolor=CARD, darkcolor=CARD,
+                    arrowcolor=MUTED, insertcolor=TEXT)
+    style.map("TCombobox",
+              fieldbackground=[("readonly", CARD)], background=[("readonly", CARD)],
+              foreground=[("readonly", TEXT)], selectbackground=[("readonly", CARD)],
+              selectforeground=[("readonly", TEXT)],
+              bordercolor=[("focus", ACCENT), ("hover", MUTED)],
+              arrowcolor=[("hover", ACCENT)])
+    # Checkboxes and radio buttons (one style for each background)
+    for prefix, bg in (("", BG), ("Card.", CARD)):
+        for kind in ("TCheckbutton", "TRadiobutton"):
+            style.configure(prefix + kind, background=bg, foreground=TEXT, font=FONT,
+                            indicatorbackground=CARD, indicatorforeground=CARD,
+                            indicatormargin=(0, 0, px(8), 0), indicatorsize=px(15),
+                            upperbordercolor=FIELD_BORDER, lowerbordercolor=FIELD_BORDER,
+                            focuscolor=bg, padding=(0, px(3)))
+            style.map(prefix + kind,
+                      background=[("active", bg)],
+                      indicatorbackground=[("selected", ACCENT), ("active", ACCENT_SOFT)],
+                      upperbordercolor=[("selected", ACCENT), ("active", ACCENT)],
+                      lowerbordercolor=[("selected", ACCENT), ("active", ACCENT)])
+    style.configure("CardBold.TRadiobutton", background=CARD, foreground=TEXT, font=FONT_B,
+                    indicatorbackground=CARD, indicatorforeground=CARD,
+                    indicatormargin=(0, 0, px(8), 0), indicatorsize=px(15),
+                    upperbordercolor=FIELD_BORDER, lowerbordercolor=FIELD_BORDER,
+                    focuscolor=CARD, padding=(0, px(3)))
+    style.map("CardBold.TRadiobutton", background=[("active", CARD)],
+              indicatorbackground=[("selected", ACCENT), ("active", ACCENT_SOFT)],
+              upperbordercolor=[("selected", ACCENT), ("active", ACCENT)],
+              lowerbordercolor=[("selected", ACCENT), ("active", ACCENT)])
+    # Slim scrollbars without arrows
+    style.layout("Thin.Vertical.TScrollbar", [
+        ("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
+            ("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
+    style.configure("Thin.Vertical.TScrollbar", troughcolor=BG, background=SCROLL,
+                    bordercolor=BG, lightcolor=SCROLL, darkcolor=SCROLL,
+                    arrowsize=px(9), gripcount=0)
+    style.map("Thin.Vertical.TScrollbar", background=[("active", SCROLL_HOVER)],
+              lightcolor=[("active", SCROLL_HOVER)], darkcolor=[("active", SCROLL_HOVER)])
+    root.option_add("*TCombobox*Listbox.selectBackground", ACCENT_SOFT)
+    root.option_add("*TCombobox*Listbox.selectForeground", TEXT)
+    root.option_add("*TCombobox*Listbox.background", CARD)
+    root.option_add("*TCombobox*Listbox.foreground", TEXT)
+    root.configure(bg=BG)
+
+
+def center_window(win, width, height, parent=None):
+    """Size a window and put it in the middle of the screen."""
+    w, h = px(width), px(height)
+    win.update_idletasks()
+    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+    w, h = min(w, sw - 40), min(h, sh - 80)
+    x = max(0, (sw - w) // 2)
+    y = max(0, (sh - h) // 2 - px(20))
+    win.geometry(f"{w}x{h}+{x}+{y}")
+
+
+def field_style():
+    """Style shared by all text boxes: flat, light outline, accent outline when typing."""
+    return dict(relief="flat", bd=0, highlightthickness=1, highlightbackground=FIELD_BORDER,
+                highlightcolor=ACCENT, bg=CARD, fg=TEXT, insertbackground=TEXT,
+                selectbackground=ACCENT_SOFT, selectforeground=TEXT)
+
+
+def field_entry(parent, var, width=40):
+    return tk.Entry(parent, textvariable=var, font=FONT, width=width, **field_style())
+
+
+def field_text(parent, height, **kw):
+    opts = dict(field_style(), font=FONT, height=height, wrap="word", padx=px(10), pady=px(8))
+    opts.update(kw)
+    return tk.Text(parent, **opts)
+
+
+def _round_rect(c, x1, y1, x2, y2, r, **kw):
+    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
+           x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    return c.create_polygon(pts, smooth=True, **kw)
+
+
+class RoundButton(tk.Canvas):
+    """A modern rounded button with hover effect. Works like tk.Button for
+    configure(text=..., state=...), cget('text'), invoke() and pack/grid."""
+    @staticmethod
+    def styles():   # kind: (fill, hover fill, text color, outline), from the palette
+        return {
+            "primary": (BTN_PRIMARY, BTN_PRIMARY_HOVER, "#ffffff", None),
+            "good": (GOOD, GOOD_HOVER, "#ffffff", None),
+            "normal": (CARD, HOVER, TEXT, FIELD_BORDER),
+            "danger": (CARD, DANGER_SOFT, DANGER, DANGER_BORDER),
+            "warning": ("#f59e0b", "#fbbf24", "#111827", None),
+            "chip": (CARD, HOVER, TEXT, FIELD_BORDER),
+            "chip_on": (ACCENT_SOFT, CHIP_ON_HOVER, ACCENT, CHIP_ON_BORDER),
+            "ghost": (None, HOVER, MUTED, None),
+        }
+
+    def __init__(self, parent, text="", command=None, kind="normal", small=False):
+        try:
+            pbg = parent.cget("bg")
+        except tk.TclError:
+            pbg = BG
+        super().__init__(parent, bg=pbg, highlightthickness=0, bd=0, cursor="hand2",
+                         takefocus=0)
+        self._text, self._command, self._kind = text, command, kind
+        self._state, self._hover, self._small = "normal", False, small
+        self.bind("<Enter>", lambda e: self._set_hover(True))
+        self.bind("<Leave>", lambda e: self._set_hover(False))
+        self.bind("<ButtonRelease-1>", self._click)
+        self._draw()
+
+    def _font(self):
+        if self._kind in ("primary", "good", "warning", "chip_on"):
+            return FONT_B
+        return FONT_S if self._small else FONT
+
+    def _draw(self):
+        import tkinter.font as tkfont
+        self.delete("all")
+        f = tkfont.Font(font=self._font())
+        padx, pady = (px(10), px(4)) if self._small else (px(14), px(7))
+        w = f.measure(self._text) + 2 * padx
+        h = f.metrics("linespace") + 2 * pady
+        tk.Canvas.configure(self, width=w, height=h)
+        st = self.styles()
+        fill, hover, fg, outline = st.get(self._kind, st["normal"])
+        disabled = self._state == "disabled"
+        body = hover if (self._hover and not disabled) else fill
+        if disabled:
+            body = {"primary": BTN_PRIMARY_OFF, "good": GOOD_OFF, "warning": "#fcd34d"}.get(
+                self._kind, fill)
+            fg = "#ffffff" if self._kind in ("primary", "good") else SUBTLE
+        if body or outline:
+            _round_rect(self, 1, 1, w - 1, h - 1, px(8) if not self._small else px(7),
+                        fill=body or self.cget("bg"), outline=outline or body or "",
+                        width=1)
+        self.create_text(w // 2, h // 2, text=self._text, fill=fg, font=self._font())
+        tk.Canvas.configure(self, cursor="arrow" if disabled else "hand2")
+
+    def _set_hover(self, on):
+        self._hover = on
+        self._draw()
+
+    def _click(self, event):
+        if 0 <= event.x <= self.winfo_width() and 0 <= event.y <= self.winfo_height():
+            self.invoke()
+
+    def invoke(self):
+        if self._state != "disabled" and self._command:
+            self._command()
+
+    def set_kind(self, kind):
+        self._kind = kind
+        self._draw()
+
+    def configure(self, cnf=None, **kw):
+        if isinstance(cnf, dict):
+            kw.update(cnf)
+        redraw = False
+        for key in ("text", "state", "command", "kind"):
+            if key in kw:
+                setattr(self, "_" + key, kw.pop(key))
+                redraw = True
+        if kw:
+            tk.Canvas.configure(self, **kw)
+        if redraw:
+            self._draw()
+    config = configure
+
+    def cget(self, key):
+        if key in ("text", "state"):
+            return getattr(self, "_" + key)
+        return tk.Canvas.cget(self, key)
+
+
+def button(parent, text, cmd, kind="normal", small=False):
+    return RoundButton(parent, text, cmd, kind, small)
+
+
+def pill(parent, text, fg, bg):
+    """A small rounded label, e.g. a status or urgency tag."""
+    import tkinter.font as tkfont
+    f = tkfont.Font(font=FONT_BADGE)
+    w, h = f.measure(text) + px(16), f.metrics("linespace") + px(6)
+    try:
+        pbg = parent.cget("bg")
+    except tk.TclError:
+        pbg = CARD
+    c = tk.Canvas(parent, width=w, height=h, bg=pbg, highlightthickness=0, bd=0)
+    _round_rect(c, 0, 0, w, h, h // 2, fill=bg, outline=bg)
+    c.create_text(w // 2, h // 2, text=text, fill=fg, font=FONT_BADGE)
+    return c
+
+
+def initials(name):
+    name = (name or "").strip().strip('"')
+    if "," in name:                                   # "Smith, Jennifer"
+        last, first = [x.strip() for x in name.split(",", 1)]
+        name = f"{first} {last}"
+    parts = [p for p in re.split(r"[\s._@-]+", name) if p and p[0].isalnum()]
+    if not parts:
+        return "?"
+    return (parts[0][0] + (parts[-1][0] if len(parts) > 1 else "")).upper()
+
+
+def avatar(parent, name, size=38):
+    s = px(size)
+    try:
+        pbg = parent.cget("bg")
+    except tk.TclError:
+        pbg = CARD
+    c = tk.Canvas(parent, width=s, height=s, bg=pbg, highlightthickness=0, bd=0)
+    color = AVATAR_COLORS[sum(map(ord, (name or "?").lower())) % len(AVATAR_COLORS)]
+    c.create_oval(1, 1, s - 1, s - 1, fill=color, outline=color)
+    c.create_text(s // 2, s // 2, text=initials(name), fill="white",
+                  font=(FONT_B[0], max(8, int(size / 3.4))) + (FONT_B[2:] if len(FONT_B) > 2 else ()))
+    return c
+
+
+def logo(parent, size=30):
+    """A simple envelope mark for the app bar."""
+    s = px(size)
+    c = tk.Canvas(parent, width=s, height=s, bg=parent.cget("bg"), highlightthickness=0, bd=0)
+    _round_rect(c, 0, 0, s, s, px(8), fill=ACCENT, outline=ACCENT)
+    m = s * 0.24
+    c.create_rectangle(m, s * 0.32, s - m, s * 0.70, outline="white", width=max(1, px(2)))
+    c.create_line(m, s * 0.32, s / 2, s * 0.52, s - m, s * 0.32, fill="white",
+                  width=max(1, px(2)), joinstyle="round")
+    return c
+
+
 class ScrollArea(tk.Frame):
     instances = []
 
-    def __init__(self, parent):
-        super().__init__(parent, bg=BG)
-        self.canvas = tk.Canvas(self, bg=BG, highlightthickness=0)
-        bar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.inner = tk.Frame(self.canvas, bg=BG)
+    def __init__(self, parent, bg=None):
+        bg = bg or BG
+        super().__init__(parent, bg=bg)
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0)
+        bar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview,
+                            style="Thin.Vertical.TScrollbar")
+        self.inner = tk.Frame(self.canvas, bg=bg)
         self.inner.bind("<Configure>", lambda e: self.canvas.configure(
             scrollregion=self.canvas.bbox("all")))
         self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
@@ -1284,7 +1654,7 @@ class ScrollArea(tk.Frame):
             self._win, width=e.width))
         self.canvas.configure(yscrollcommand=bar.set)
         self.canvas.pack(side="left", fill="both", expand=True)
-        bar.pack(side="right", fill="y")
+        bar.pack(side="right", fill="y", padx=(0, px(2)), pady=px(2))
         ScrollArea.instances.append(self)
 
     def clear(self):
@@ -1311,24 +1681,13 @@ class ScrollArea(tk.Frame):
                 return
 
 
-def button(parent, text, cmd, kind="normal"):
-    colors = {"primary": (ACCENT, "white", "#1d4ed8"),
-              "good": (GOOD, "white", "#166534"),
-              "danger": (CARD, DANGER, "#fee2e2"),
-              "normal": (CARD, TEXT, "#e5e7eb")}
-    bg, fg, active = colors[kind]
-    return tk.Button(parent, text=text, command=cmd, bg=bg, fg=fg,
-                     activebackground=active, activeforeground=fg,
-                     relief="solid" if kind in ("normal", "danger") else "flat",
-                     bd=1, highlightthickness=0,
-                     font=FONT_B if kind in ("primary", "good") else FONT,
-                     padx=12, pady=5, cursor="hand2")
-
-
-def link(parent, text, cmd, bg=CARD):
-    lbl = tk.Label(parent, text=text, fg=ACCENT, bg=bg, cursor="hand2",
-                   font=("Segoe UI", 10, "underline"))
+def link(parent, text, cmd, bg=None):
+    bg = bg or parent.cget("bg")
+    lbl = tk.Label(parent, text=text, fg=ACCENT, bg=bg, cursor="hand2", font=FONT_B)
     lbl.bind("<Button-1>", lambda e: cmd())
+    lbl.bind("<Enter>", lambda e: lbl.configure(fg=ACCENT_HOVER,
+                                                font=tuple(FONT_B) + ("underline",)))
+    lbl.bind("<Leave>", lambda e: lbl.configure(fg=ACCENT, font=FONT_B))
     return lbl
 
 
@@ -1355,8 +1714,9 @@ def auto_height(t, minimum=3, maximum=18):
 # The app
 # ---------------------------------------------------------------------------
 class EmailAssistant:
-    def __init__(self, root):
+    def __init__(self, root, geometry=None, start_tab=None):
         self.root = root
+        self.rebuild = False
         self.settings = load_json(SETTINGS_FILE, DEFAULT_SETTINGS)
         self.data = load_json(STATE_FILE, {"processed": [], "suggested": [], "needs_you": [],
                                            "inbox": []})
@@ -1374,81 +1734,107 @@ class EmailAssistant:
         self._auto_job = None
 
         root.title("Email Assistant")
-        root.geometry("940x760")
-        root.minsize(720, 520)
+        root.minsize(px(760), px(560))
         root.configure(bg=BG)
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-        style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(12, 6, 12, 0))
-        style.configure("TNotebook.Tab", font=FONT_B, padding=(16, 8), background=BG,
-                        foreground=MUTED, borderwidth=0, lightcolor=BG, darkcolor=BG,
-                        bordercolor=BG, focuscolor=BG)
-        style.map("TNotebook.Tab",
-                  background=[("selected", CARD), ("active", "#e5e7eb")],
-                  foreground=[("selected", ACCENT)],
-                  lightcolor=[("selected", CARD)], bordercolor=[("selected", CARD)])
-        style.configure("TCombobox", padding=4, arrowsize=14)
-        style.configure("Vertical.TScrollbar", background="#d1d5db", troughcolor=BG,
-                        borderwidth=0, arrowcolor=MUTED, lightcolor="#d1d5db",
-                        darkcolor="#d1d5db")
+        if geometry:
+            root.geometry(geometry)
+        else:
+            center_window(root, 1000, 800)
 
         # App bar (white strip across the top)
-        appbar = tk.Frame(root, bg=CARD, highlightthickness=0)
+        appbar = tk.Frame(root, bg=CARD)
         appbar.pack(fill="x")
         top = tk.Frame(appbar, bg=CARD)
-        top.pack(fill="x", padx=20, pady=(12, 10))
-        tk.Label(top, text="✉", font=("Segoe UI Symbol", 18), bg=CARD, fg=ACCENT
-                 ).pack(side="left")
-        tk.Label(top, text="Email Assistant", font=("Segoe UI Semibold", 15),
-                 bg=CARD, fg=TEXT).pack(side="left", padx=(6, 0))
-        self.account_label = tk.Label(top, text="", font=FONT_S, bg="#eef2ff", fg=ACCENT,
-                                      padx=10, pady=3)
+        top.pack(fill="x", padx=px(22), pady=(px(12), px(12)))
+        logo(top).pack(side="left")
+        titles = tk.Frame(top, bg=CARD)
+        titles.pack(side="left", padx=(px(10), 0))
+        tk.Label(titles, text="Email Assistant", font=FONT_TITLE, bg=CARD, fg=TEXT
+                 ).pack(anchor="w")
+        tk.Label(titles, text="Suggested replies to your email, approved by you",
+                 font=FONT_S, bg=CARD, fg=MUTED).pack(anchor="w")
+        self.account_label = tk.Label(top, text="", font=FONT_S, bg=ACCENT_SOFT, fg=ACCENT,
+                                      padx=px(12), pady=px(5))
         self.account_label.pack(side="right")
-        self.update_btn = tk.Button(top, text="", command=self.offer_update,
-                                    bg="#f59e0b", fg="black", activebackground="#d97706",
-                                    relief="flat", font=FONT_B, padx=12, pady=4,
-                                    cursor="hand2")
+        button(top, "Light mode" if DARK_MODE else "Dark mode",
+               lambda: self.switch_theme("light" if DARK_MODE else "dark"), "ghost", small=True
+               ).pack(side="right", padx=(0, px(10)))
+        self.update_btn = RoundButton(top, "", self.offer_update, "warning")
         self.update_info = None
         self.updating = False
         tk.Frame(root, bg=BORDER, height=1).pack(fill="x")
 
-        # Check bar: which emails to look at
+        # Toolbar: which emails to look at (left) and auto-refresh + check (right)
         bar = tk.Frame(root, bg=BG)
-        bar.pack(fill="x", padx=20, pady=(12, 4))
-        tk.Label(bar, text="Look at emails from", font=FONT, bg=BG, fg=TEXT
-                 ).pack(side="left")
+        bar.pack(fill="x", padx=px(22), pady=(px(14), px(4)))
+        left = tk.Frame(bar, bg=BG)
+        left.pack(side="left")
+        tk.Label(left, text="Show emails from", font=FONT_S, bg=BG, fg=MUTED
+                 ).grid(row=0, column=0, sticky="w")
         labels = [lbl for lbl, _ in TIME_RANGES]
         if self.settings.get("check_range") not in labels:
             self.settings["check_range"] = DEFAULT_RANGE
         self.range_var = tk.StringVar(value=self.settings["check_range"])
-        rng = ttk.Combobox(bar, textvariable=self.range_var, values=labels,
+        rng = ttk.Combobox(left, textvariable=self.range_var, values=labels,
                            state="readonly", width=16, font=FONT)
-        rng.pack(side="left", padx=(6, 14))
+        rng.grid(row=1, column=0, sticky="w", pady=(px(3), 0))
         rng.bind("<<ComboboxSelected>>", lambda e: self.remember_check_options())
         self.include_read_var = tk.BooleanVar(value=bool(self.settings.get("include_read")))
-        tk.Checkbutton(bar, text="Include emails I've already read",
-                       variable=self.include_read_var, command=self.remember_check_options,
-                       font=FONT, bg=BG, activebackground=BG).pack(side="left")
-        self.check_btn = button(bar, "Check emails", self.start_check, "primary")
-        self.check_btn.pack(side="right")
+        ttk.Checkbutton(left, text="Include read emails", variable=self.include_read_var,
+                        command=self.remember_check_options
+                        ).grid(row=1, column=1, sticky="w", padx=(px(14), 0), pady=(px(3), 0))
+
+        right = tk.Frame(bar, bg=BG)
+        right.pack(side="right")
+        mins_now = int(self.settings.get("auto_check_minutes") or 0)
+        choices = dict((m, l) for l, m in REFRESH_CHOICES)
+        if mins_now not in choices:      # e.g. an old custom number: use the closest
+            mins_now = min(choices, key=lambda m: abs(m - mins_now))
+            self.settings["auto_check_minutes"] = mins_now
+        self.refresh_var = tk.StringVar(value=choices[mins_now])
+        lab = tk.Frame(right, bg=BG)
+        lab.grid(row=0, column=0, sticky="w")
+        tk.Label(lab, text="Auto-refresh", font=FONT_S, bg=BG, fg=MUTED).pack(side="left")
+        self.next_label = tk.Label(lab, text="", font=FONT_S, bg=BG, fg=ACCENT)
+        self.next_label.pack(side="left", padx=(px(6), 0))
+        ref = ttk.Combobox(right, textvariable=self.refresh_var, width=16, font=FONT,
+                           values=[l for l, _ in REFRESH_CHOICES], state="readonly")
+        ref.grid(row=1, column=0, sticky="w", pady=(px(3), 0))
+        ref.bind("<<ComboboxSelected>>", lambda e: self.on_refresh_change())
+        self.check_btn = button(right, "Check emails", self.start_check, "primary")
+        self.check_btn.grid(row=1, column=1, sticky="e", padx=(px(12), 0), pady=(px(3), 0))
+        self.auto_running = False
+
         self.status = tk.Label(root, text="", font=FONT_S, bg=BG, fg=MUTED, anchor="w",
-                               justify="left", wraplength=880)
-        self.status.pack(fill="x", padx=22, pady=(2, 0))
+                               justify="left", wraplength=px(940))
+        self.status.pack(fill="x", padx=px(24), pady=(px(6), 0))
 
         # Tabs (Inbox first: it's the start screen)
         self.tabs = ttk.Notebook(root)
-        self.tabs.pack(fill="both", expand=True, padx=8, pady=(4, 10))
+        self.tabs.pack(fill="both", expand=True, padx=px(10), pady=(px(6), px(10)))
         self.inbox_area = ScrollArea(self.tabs)
         self.sug_area = ScrollArea(self.tabs)
         self.need_area = ScrollArea(self.tabs)
-        self.set_area = ScrollArea(self.tabs)
+        # Settings: scrolling content with a fixed Save bar at the bottom
+        self.set_tab = tk.Frame(self.tabs, bg=BG)
+        self.set_area = ScrollArea(self.set_tab)
+        self.set_area.pack(fill="both", expand=True)
+        savebar = tk.Frame(self.set_tab, bg=CARD, highlightthickness=1,
+                           highlightbackground=BORDER)
+        savebar.pack(fill="x", side="bottom")
+        sb_in = tk.Frame(savebar, bg=CARD)
+        sb_in.pack(fill="x", padx=px(18), pady=px(10))
+        button(sb_in, "Save settings", self.save_settings, "primary").pack(side="right")
+        button(sb_in, "Restore defaults", self.restore_defaults).pack(side="right",
+                                                                     padx=(0, px(8)))
+        tk.Label(sb_in, text="Changes take effect when you save.", font=FONT_S, bg=CARD,
+                 fg=MUTED).pack(side="left")
+        self.set_area.pack_forget()
+        self.set_area.pack(fill="both", expand=True, side="top")
         self.tabs.add(self.inbox_area, text="Inbox")
         self.tabs.add(self.sug_area, text="Suggested replies")
         self.tabs.add(self.need_area, text="Needs your attention")
-        self.tabs.add(self.set_area, text="Settings")
+        self.tabs.add(self.set_tab, text="Settings")
 
         root.bind_all("<MouseWheel>", ScrollArea.on_wheel)
         root.bind_all("<Button-4>", ScrollArea.on_wheel)
@@ -1460,15 +1846,17 @@ class EmailAssistant:
         self.refresh_account()
         self.set_status("Click 'Check emails' to start." if not self.data["suggested"]
                         else "Review the suggested replies below.")
-        self.root.after(150, self.poll)
+        self._poll_job = self.root.after(150, self.poll)
         self.schedule_auto()
         if self.settings["my_name"] == DEFAULT_SETTINGS["my_name"]:
-            self.tabs.select(self.set_area)
+            self.tabs.select(self.set_tab)
             self.set_status("Welcome! Fill in your name and preferences, connect your "
                             "Microsoft account, then click Save settings.")
         elif not uses_classic(self.settings) and not signed_in_user(self.settings):
             self.set_status("Sign in to your Microsoft account under Settings to get started.")
-        if self.settings.get("check_updates_on_start", True):
+        if start_tab == "settings":
+            self.tabs.select(self.set_tab)
+        if self.settings.get("check_updates_on_start", True) and not geometry:
             self.root.after(3000, lambda: self.check_for_updates(manual=False))
 
     # ----- helpers -----
@@ -1574,7 +1962,7 @@ class EmailAssistant:
     def ask_to_sign_in(self, then=None):
         cid, _ = sign_in_ids(self.settings)
         if not cid:
-            self.tabs.select(self.set_area)
+            self.tabs.select(self.set_tab)
             messagebox.showinfo("Email Assistant", friendly_error(SetupNeeded()))
             return
         if messagebox.askyesno("Sign in", "You need to sign in to your Microsoft account "
@@ -1633,173 +2021,186 @@ class EmailAssistant:
     # ----- rendering -----
     def render(self):
         n_s, n_n = len(self.data["suggested"]), len(self.data["needs_you"])
-        self.tabs.tab(0, text=f"Inbox ({len(self.data['inbox'])})")
-        self.tabs.tab(1, text=f"Suggested replies ({n_s})")
-        self.tabs.tab(2, text=f"Needs your attention ({n_n})")
+        self.tabs.tab(0, text=f"Inbox  {len(self.data['inbox'])}")
+        self.tabs.tab(1, text=f"Suggested replies  {n_s}")
+        self.tabs.tab(2, text=f"Needs your attention  {n_n}")
         self.root.title(f"Email Assistant ({n_s} to review)" if n_s else "Email Assistant")
         self.render_inbox()
         self.render_suggested()
         self.render_needs()
 
-    def badge(self, parent, text, fg, bg):
-        return tk.Label(parent, text=text, font=("Segoe UI", 8, "bold"), fg=fg, bg=bg,
-                        padx=7, pady=1)
-
-    def urgency_badge(self, parent, e):
+    def urgency_badge(self, parent, e, padx=(px(8), 0)):
         imp = e.get("importance", "normal")
         if imp == "high":
-            self.badge(parent, "HIGH URGENCY", "#991b1b", "#fee2e2").pack(side="left", padx=(8, 0))
+            pill(parent, "Urgent", *B_RED).pack(side="left", padx=padx)
         elif imp == "low":
-            self.badge(parent, "LOW URGENCY", "#475569", "#f1f5f9").pack(side="left", padx=(8, 0))
+            pill(parent, "Low priority", *B_GRAY).pack(side="left", padx=padx)
 
     def status_badge(self, parent, status):
-        colors = {"simple": ("#166534", "#dcfce7"), "needs_you": ("#9a3412", "#ffedd5"),
-                  "replied": ("#1e40af", "#dbeafe"), "drafted": ("#1e40af", "#dbeafe"),
-                  "writing": ("#6d28d9", "#ede9fe")}
-        fg, bg = colors.get(status, ("#475569", "#f1f5f9"))
-        return self.badge(parent, STATUS_LABELS.get(status, status).upper(), fg, bg)
+        colors = {"simple": B_GREEN, "needs_you": B_ORANGE, "replied": B_BLUE,
+                  "drafted": B_BLUE, "writing": B_PURPLE}
+        return pill(parent, STATUS_LABELS.get(status, status), *colors.get(status, B_GRAY))
+
+    def new_card(self, parent, pady=(px(10), 0), urgent=False):
+        outer = tk.Frame(parent, bg=BORDER)
+        outer.pack(fill="x", padx=px(14), pady=pady)
+        card = tk.Frame(outer, bg=CARD, padx=px(18), pady=px(14))
+        card.pack(fill="both", padx=1, pady=1)
+        if urgent:
+            tk.Frame(outer, bg=URGENT, width=px(4)).place(x=0, y=0, relheight=1)
+        return card
+
+    def section_intro(self, parent, text, right=None):
+        bar = tk.Frame(parent, bg=BG)
+        bar.pack(fill="x", padx=px(16), pady=(px(14), px(2)))
+        tk.Label(bar, text=text, font=FONT_S, bg=BG, fg=MUTED, anchor="w", justify="left"
+                 ).pack(side="left")
+        return bar
+
+    def empty(self, parent, title, text):
+        box = tk.Frame(parent, bg=BG)
+        box.pack(pady=px(80))
+        c = tk.Canvas(box, width=px(56), height=px(56), bg=BG, highlightthickness=0)
+        c.create_oval(2, 2, px(54), px(54), fill=ACCENT_SOFT, outline=ACCENT_SOFT)
+        m = px(17)
+        c.create_rectangle(m, px(21), px(56) - m, px(37), outline=ACCENT, width=px(2))
+        c.create_line(m, px(21), px(28), px(30), px(56) - m, px(21), fill=ACCENT, width=px(2))
+        c.pack()
+        tk.Label(box, text=title, font=FONT_H, bg=BG, fg=TEXT).pack(pady=(px(12), px(4)))
+        tk.Label(box, text=text, font=FONT, bg=BG, fg=MUTED, justify="center").pack()
 
     def render_inbox(self):
         area = self.inbox_area
         area.clear()
-        bar = tk.Frame(area.inner, bg=BG)
-        bar.pack(fill="x", padx=8, pady=(10, 2))
-        tk.Label(bar, text="Every email from your checks, including the ones the assistant "
-                           "skipped.", font=FONT, bg=BG, fg=MUTED).pack(side="left")
         items = self.data["inbox"]
         if not items:
-            self.empty(area.inner, "No emails yet.\n\nChoose a time range above and click "
-                                   "'Check emails'.")
+            self.empty(area.inner, "No emails yet",
+                       "Choose a time range above and click Check emails.")
             return
-        for e in items:
-            outer = tk.Frame(area.inner, bg=BORDER)
-            outer.pack(fill="x", padx=8, pady=4)
-            card = tk.Frame(outer, bg=CARD, padx=14, pady=10)
-            card.pack(fill="both", padx=1, pady=1)
-            if e.get("importance") == "high":
-                tk.Frame(outer, bg="#dc2626", width=4).place(x=0, y=0, relheight=1)
-            row = tk.Frame(card, bg=CARD)
-            row.pack(fill="x")
-            tk.Label(row, text=e["from"], font=FONT_B, bg=CARD, fg=TEXT).pack(side="left")
-            self.urgency_badge(row, e)
-            tk.Label(row, text=e["received"], font=FONT_S, bg=CARD, fg=MUTED
+        self.section_intro(area.inner, "Every email from your checks, including the ones "
+                                       "the assistant skipped.")
+        for i, e in enumerate(items):
+            card = self.new_card(area.inner, pady=(px(8), px(14) if i == len(items) - 1 else 0),
+                                 urgent=e.get("importance") == "high")
+            card.columnconfigure(1, weight=1)
+            avatar(card, e["from"]).grid(row=0, column=0, rowspan=4, sticky="n",
+                                         padx=(0, px(14)))
+            top = tk.Frame(card, bg=CARD)
+            top.grid(row=0, column=1, sticky="ew")
+            tk.Label(top, text=e["from"], font=FONT_B, bg=CARD, fg=TEXT).pack(side="left")
+            self.urgency_badge(top, e)
+            tk.Label(top, text=e["received"], font=FONT_S, bg=CARD, fg=SUBTLE
                      ).pack(side="right")
-            self.status_badge(row, e.get("status", "")).pack(side="right", padx=(0, 10))
+            self.status_badge(top, e.get("status", "")).pack(side="right", padx=(0, px(10)))
             tk.Label(card, text=e["subject"], font=FONT, bg=CARD, fg=TEXT, anchor="w",
-                     justify="left", wraplength=820).pack(fill="x", pady=(3, 0))
+                     justify="left", wraplength=px(760)
+                     ).grid(row=1, column=1, sticky="ew", pady=(px(2), 0))
             if e.get("preview"):
-                prev = e["preview"].replace("\r", " ").replace("\n", " ")
-                tk.Label(card, text=prev[:180] + ("..." if len(prev) > 180 else ""),
+                prev = " ".join(e["preview"].split())
+                tk.Label(card, text=prev[:170] + ("..." if len(prev) > 170 else ""),
                          font=FONT_S, bg=CARD, fg=MUTED, anchor="w", justify="left",
-                         wraplength=820).pack(fill="x")
-            if e.get("reason") and e.get("status") in ("skipped", "no_reply"):
-                tk.Label(card, text=e["reason"], font=("Segoe UI", 9, "italic"), bg=CARD,
-                         fg=MUTED, anchor="w").pack(fill="x", pady=(2, 0))
+                         wraplength=px(760)).grid(row=2, column=1, sticky="ew",
+                                                  pady=(px(2), 0))
             acts = tk.Frame(card, bg=CARD)
-            acts.pack(fill="x", pady=(6, 0))
-            link(acts, "View email", lambda e=e: self.view_email(e)).pack(side="left")
+            acts.grid(row=3, column=1, sticky="ew", pady=(px(8), 0))
+            link(acts, "View", lambda e=e: self.view_email(e)).pack(side="left")
             link(acts, "Open in Outlook", lambda e=e: self.open_original(e)
-                 ).pack(side="left", padx=(14, 0))
+                 ).pack(side="left", padx=(px(16), 0))
             lst, _ = self.find(e["id"])
             if lst == "suggested":
                 link(acts, "Go to suggested reply",
-                     lambda: self.tabs.select(self.sug_area)).pack(side="left", padx=(14, 0))
-            elif e["id"] in self.writing:
-                tk.Label(acts, text="Writing a reply...", font=FONT_S, bg=CARD, fg=MUTED
-                         ).pack(side="left", padx=(14, 0))
+                     lambda: self.tabs.select(self.sug_area)).pack(side="left", padx=(px(16), 0))
             else:
-                link(acts, "Write a reply with AI anyway" if e.get("status") in
+                link(acts, "Write a reply anyway" if e.get("status") in
                      ("skipped", "no_reply", "dismissed") else "Write a reply with AI",
                      lambda e=e: self.rewrite(e, from_needs=True)
-                     ).pack(side="left", padx=(14, 0))
-
-    def empty(self, parent, text):
-        tk.Label(parent, text=text, font=FONT, bg=BG, fg=MUTED, justify="center"
-                 ).pack(pady=60)
+                     ).pack(side="left", padx=(px(16), 0))
+            if e.get("reason") and e.get("status") in ("skipped", "no_reply"):
+                tk.Label(acts, text=e["reason"], font=FONT_S, bg=CARD, fg=SUBTLE
+                         ).pack(side="right")
 
     def render_suggested(self):
         area = self.sug_area
         area.clear()
         items = self.data["suggested"]
         if not items:
-            self.empty(area.inner, "No suggested replies right now.\n\n"
-                                   "Click 'Check emails' to look for new ones.")
+            self.empty(area.inner, "Nothing to review",
+                       "Suggested replies will appear here after you check your email.")
             return
-        bar = tk.Frame(area.inner, bg=BG)
-        bar.pack(fill="x", padx=8, pady=(10, 2))
-        tk.Label(bar, text="Read each reply, edit it if you like, then send it or remove it.",
-                 font=FONT, bg=BG, fg=MUTED).pack(side="left")
+        bar = self.section_intro(area.inner, "Read each reply, edit it if you like, then "
+                                             "send it or remove it.")
         if len(items) > 1:
-            button(bar, f"Send all {len(items)}", self.send_all, "good").pack(side="right")
-        for e in items:
-            self.reply_card(area.inner, e)
+            button(bar, f"Send all {len(items)}", self.send_all, "good", small=True
+                   ).pack(side="right")
+        for i, e in enumerate(items):
+            self.reply_card(area.inner, e, last=(i == len(items) - 1))
 
     def card_header(self, card, e):
         head = tk.Frame(card, bg=CARD)
         head.pack(fill="x")
-        tk.Label(head, text=e["from"], font=FONT_H, bg=CARD, fg=TEXT).pack(side="left")
-        self.urgency_badge(head, e)
-        tk.Label(head, text=e["received"], font=FONT_S, bg=CARD, fg=MUTED).pack(side="right")
-        tk.Label(card, text=e["address"], font=FONT_S, bg=CARD, fg=MUTED,
-                 anchor="w").pack(fill="x")
-        tk.Label(card, text="Subject: " + e["subject"], font=FONT_B, bg=CARD, fg=TEXT,
-                 anchor="w", justify="left", wraplength=820).pack(fill="x", pady=(6, 0))
-        row = tk.Frame(card, bg=CARD)
-        row.pack(fill="x", pady=(2, 0))
-        link(row, "Open the original email", lambda: self.open_original(e)
-             ).pack(side="left")
+        avatar(head, e["from"], 40).pack(side="left", padx=(0, px(12)))
+        who = tk.Frame(head, bg=CARD)
+        who.pack(side="left", fill="x", expand=True)
+        r1 = tk.Frame(who, bg=CARD)
+        r1.pack(fill="x")
+        tk.Label(r1, text=e["from"], font=FONT_H, bg=CARD, fg=TEXT).pack(side="left")
+        self.urgency_badge(r1, e)
+        tk.Label(r1, text=e["received"], font=FONT_S, bg=CARD, fg=SUBTLE).pack(side="right")
+        tk.Label(who, text=e["address"], font=FONT_S, bg=CARD, fg=MUTED, anchor="w"
+                 ).pack(fill="x")
+        tk.Label(card, text=e["subject"], font=FONT_B, bg=CARD, fg=TEXT, anchor="w",
+                 justify="left", wraplength=px(820)).pack(fill="x", pady=(px(12), 0))
+        meta = tk.Frame(card, bg=CARD)
+        meta.pack(fill="x", pady=(px(3), 0))
+        link(meta, "Open the original email", lambda: self.open_original(e)).pack(side="left")
         if e.get("reason"):
-            tk.Label(card, text="Assistant's note: " + e["reason"], font=FONT_S, bg=CARD,
-                     fg=MUTED, anchor="w", justify="left", wraplength=820
-                     ).pack(fill="x", pady=(4, 0))
+            tk.Label(card, text=e["reason"], font=FONT_S, bg=CARD, fg=MUTED, anchor="w",
+                     justify="left", wraplength=px(820)).pack(fill="x", pady=(px(3), 0))
 
-    def new_card(self, parent):
-        outer = tk.Frame(parent, bg=BORDER)
-        outer.pack(fill="x", padx=8, pady=8)
-        card = tk.Frame(outer, bg=CARD, padx=16, pady=12)
-        card.pack(fill="both", padx=1, pady=1)
-        return card
-
-    def reply_card(self, parent, e):
-        card = self.new_card(parent)
+    def reply_card(self, parent, e, last=False):
+        card = self.new_card(parent, pady=(px(10), px(14) if last else 0),
+                             urgent=e.get("importance") == "high")
         self.card_header(card, e)
 
-        tk.Label(card, text="Your reply", font=FONT_B, bg=CARD, fg=TEXT,
-                 anchor="w").pack(fill="x", pady=(12, 2))
-        box = tk.Frame(card, bg=BORDER)
+        tk.Label(card, text="Your reply", font=FONT_S, bg=CARD, fg=MUTED,
+                 anchor="w").pack(fill="x", pady=(px(14), px(4)))
+        box = tk.Frame(card, bg=EDIT_BG, highlightthickness=1,
+                       highlightbackground=FIELD_BORDER, padx=px(12), pady=px(10))
         box.pack(fill="x")
-        inner = tk.Frame(box, bg=EDIT_BG, padx=10, pady=8)
-        inner.pack(fill="x", padx=1, pady=1)
         before = fill(self.settings["before_text"], e, self.settings).strip()
         after = fill(self.settings["after_text"], e, self.settings).strip()
         if before:
-            tk.Label(inner, text=before, font=FONT, bg=EDIT_BG, fg=MUTED, anchor="w",
-                     justify="left").pack(fill="x", pady=(0, 4))
-        t = tk.Text(inner, font=FONT, wrap="word", height=3, bg="white", fg=TEXT,
-                    relief="solid", bd=1, padx=8, pady=6, undo=True,
-                    highlightthickness=1, highlightcolor=ACCENT, highlightbackground=BORDER)
+            tk.Label(box, text=before, font=FONT, bg=EDIT_BG, fg=MUTED, anchor="w",
+                     justify="left").pack(fill="x", pady=(0, px(4)))
+        t = tk.Text(box, font=FONT, wrap="word", height=3, bg=EDIT_BG, fg=TEXT,
+                    relief="flat", bd=0, highlightthickness=0, padx=0, pady=px(2),
+                    undo=True, insertbackground=TEXT, selectbackground=ACCENT_SOFT,
+                    selectforeground=TEXT)
         t.insert("1.0", e["reply"])
         t.edit_modified(False)
         t.edit_reset()
         t.pack(fill="x")
-        auto_height(t)
+        auto_height(t, minimum=2)
         if after:
-            tk.Label(inner, text=after, font=FONT, bg=EDIT_BG, fg=MUTED, anchor="w",
-                     justify="left").pack(fill="x", pady=(4, 0))
-        tk.Label(card, text="Click in the white box to change the wording. The grey text "
-                            "is added automatically (change it under Settings).",
-                 font=FONT_S, bg=CARD, fg=MUTED, anchor="w").pack(fill="x", pady=(3, 0))
+            tk.Label(box, text=after, font=FONT, bg=EDIT_BG, fg=MUTED, anchor="w",
+                     justify="left").pack(fill="x", pady=(px(4), 0))
+        t.bind("<FocusIn>", lambda ev: box.configure(highlightbackground=ACCENT), add="+")
+        t.bind("<FocusOut>", lambda ev: box.configure(highlightbackground=FIELD_BORDER),
+               add="+")
+        tk.Label(card, text="Click the reply to edit it. The greyed greeting and sign-off "
+                            "come from Settings.", font=FONT_S, bg=CARD, fg=SUBTLE,
+                 anchor="w").pack(fill="x", pady=(px(5), 0))
 
         def on_change(_evt=None):
             if t.edit_modified():
                 e["reply"] = t.get("1.0", "end").strip()
                 t.edit_modified(False)
-                auto_height(t)
+                auto_height(t, minimum=2)
                 self.save_soon()
         t.bind("<<Modified>>", on_change)
 
         btns = tk.Frame(card, bg=CARD)
-        btns.pack(fill="x", pady=(12, 0))
+        btns.pack(fill="x", pady=(px(14), 0))
         busy = e["id"] in self.busy_ids
         send_b = button(btns, "Sending..." if busy else "Approve & send",
                         lambda: self.send(e, t), "good")
@@ -1807,90 +2208,93 @@ class EmailAssistant:
         writing = e["id"] in self.writing
         rw = button(btns, "Writing..." if writing else "Rewrite with AI",
                     lambda: self.rewrite(e))
-        rw.pack(side="left", padx=(8, 0))
-        draft_b = button(btns, "Save as Outlook draft", lambda: self.save_draft(e, t))
-        draft_b.pack(side="left", padx=(8, 0))
+        rw.pack(side="left", padx=(px(8), 0))
+        draft_b = button(btns, "Save as draft", lambda: self.save_draft(e, t))
+        draft_b.pack(side="left", padx=(px(8), 0))
         for b in ([send_b, draft_b] if busy else []) + ([rw] if writing else []):
             b.configure(state="disabled")
-        button(btns, "Don't reply", lambda: self.discard(e), "danger"
-               ).pack(side="right")
-        button(btns, "Move to 'needs attention'", lambda: self.move_to_needs(e)
-               ).pack(side="right", padx=(0, 8))
+        button(btns, "Don't reply", lambda: self.discard(e), "danger").pack(side="right")
+        button(btns, "Needs attention", lambda: self.move_to_needs(e), "ghost"
+               ).pack(side="right", padx=(0, px(6)))
 
     def render_needs(self):
         area = self.need_area
         area.clear()
         items = self.data["needs_you"]
         if not items:
-            self.empty(area.inner, "Nothing needs your attention right now.")
+            self.empty(area.inner, "All caught up",
+                       "Emails that need a real answer from you will show up here.")
             return
-        tk.Label(area.inner, text="These emails need a real answer from you. "
-                                  "The assistant didn't write a reply for them.",
-                 font=FONT, bg=BG, fg=MUTED, anchor="w").pack(fill="x", padx=8, pady=(10, 2))
-        for e in items:
-            card = self.new_card(area.inner)
+        self.section_intro(area.inner, "These emails need a real answer from you, so the "
+                                       "assistant didn't write a reply.")
+        for i, e in enumerate(items):
+            card = self.new_card(area.inner, pady=(px(10), px(14) if i == len(items) - 1 else 0),
+                                 urgent=e.get("importance") == "high")
             self.card_header(card, e)
             btns = tk.Frame(card, bg=CARD)
-            btns.pack(fill="x", pady=(12, 0))
-            busy = e["id"] in self.writing
-            b = button(btns, "Writing..." if busy else "Have AI draft a reply",
-                       lambda e=e: self.rewrite(e, from_needs=True), "primary")
-            b.pack(side="left")
-            if busy:
-                b.configure(state="disabled")
-            button(btns, "Start a reply in Outlook Drafts", lambda e=e: self.reply_myself(e)
-                   ).pack(side="left", padx=(8, 0))
-            button(btns, "Done / dismiss", lambda e=e: self.remove(e["id"], "dismissed"), "danger"
+            btns.pack(fill="x", pady=(px(14), 0))
+            button(btns, "Draft a reply with AI", lambda e=e: self.rewrite(e, from_needs=True),
+                   "primary").pack(side="left")
+            button(btns, "Start my own reply", lambda e=e: self.reply_myself(e)
+                   ).pack(side="left", padx=(px(8), 0))
+            button(btns, "Dismiss", lambda e=e: self.remove(e["id"], "dismissed"), "danger"
                    ).pack(side="right")
 
     # ----- settings tab -----
     def build_settings(self):
         p = self.set_area.inner
         s = self.settings
-        wrap = tk.Frame(p, bg=BG, padx=16, pady=10)
+        wrap = tk.Frame(p, bg=BG, padx=px(14), pady=px(4))
         wrap.pack(fill="x")
         self.fields = {}
 
         def section(title, note=None):
-            tk.Label(wrap, text=title, font=FONT_H, bg=BG, fg=TEXT, anchor="w"
-                     ).pack(fill="x", pady=(16, 2))
+            outer = tk.Frame(wrap, bg=BORDER)
+            outer.pack(fill="x", pady=(px(12), 0))
+            card = tk.Frame(outer, bg=CARD, padx=px(20), pady=px(16))
+            card.pack(fill="both", padx=1, pady=1)
+            tk.Label(card, text=title, font=FONT_H, bg=CARD, fg=TEXT, anchor="w"
+                     ).pack(fill="x")
             if note:
-                tk.Label(wrap, text=note, font=FONT_S, bg=BG, fg=MUTED, anchor="w",
-                         justify="left", wraplength=820).pack(fill="x", pady=(0, 4))
+                tk.Label(card, text=note, font=FONT_S, bg=CARD, fg=MUTED, anchor="w",
+                         justify="left", wraplength=px(820)).pack(fill="x", pady=(px(2), 0))
+            body = tk.Frame(card, bg=CARD)
+            body.pack(fill="x", pady=(px(12), 0))
+            return body
 
-        def entry(key, label, width=40, parent=None):
-            parent = parent or wrap
-            pbg = parent.cget("bg")
-            row = tk.Frame(parent, bg=pbg)
-            row.pack(fill="x", pady=3)
-            tk.Label(row, text=label, font=FONT, bg=pbg, fg=TEXT, anchor="w", width=40
-                     ).pack(side="left", padx=(0, 6))
+        def entry(parent, key, label, width=40):
+            row = tk.Frame(parent, bg=parent.cget("bg"))
+            row.pack(fill="x", pady=px(4))
+            tk.Label(row, text=label, font=FONT, bg=row.cget("bg"), fg=TEXT, anchor="w",
+                     width=22).pack(side="left")
             v = tk.StringVar(value=str(s[key]))
-            tk.Entry(row, textvariable=v, font=FONT, width=width, relief="solid", bd=1
-                     ).pack(side="left", ipady=3)
+            field_entry(row, v, width).pack(side="left", ipady=px(5))
             self.fields[key] = v
+            return v
 
-        def textbox(key, height):
-            t = tk.Text(wrap, font=FONT, height=height, wrap="word", relief="solid",
-                        bd=1, padx=8, pady=6)
+        def label(parent, text):
+            tk.Label(parent, text=text, font=FONT_B, bg=CARD, fg=TEXT, anchor="w"
+                     ).pack(fill="x", pady=(px(4), px(4)))
+
+        def textbox(parent, key, height):
+            t = field_text(parent, height)
             t.insert("1.0", s[key])
             t.pack(fill="x")
             self.fields[key] = t
 
-        def check(key, label):
+        def check(parent, key, text):
             v = tk.BooleanVar(value=bool(s[key]))
-            tk.Checkbutton(wrap, text=label, variable=v, font=FONT, bg=BG,
-                           activebackground=BG, anchor="w").pack(fill="x")
+            ttk.Checkbutton(parent, text=text, variable=v, style="Card.TCheckbutton"
+                            ).pack(fill="x", anchor="w")
             self.fields[key] = v
 
-        section("About you")
-        entry("my_name", "Your name")
-        entry("my_role", "Your job title")
+        # --- Profile
+        body = section("Your profile", "Used to sign replies and to give the AI context.")
+        entry(body, "my_name", "Your name")
+        entry(body, "my_role", "Your job title")
 
-        section("Connection", "How Email Assistant reaches your email.")
-        conn = tk.Frame(wrap, bg=CARD, padx=14, pady=10, highlightthickness=1,
-                        highlightbackground=BORDER)
-        conn.pack(fill="x")
+        # --- Connection
+        body = section("Connection", "How Email Assistant reaches your email.")
         self.conn_var = tk.StringVar(value="classic" if uses_classic(s) else "microsoft")
         self.fields["connection"] = self.conn_var
         for value, title, desc in (
@@ -1898,129 +2302,129 @@ class EmailAssistant:
                  "Works with the new Outlook, classic Outlook, Outlook on the web and Mac. "
                  "Needs a one-time approval from IT and a sign-in."),
                 ("classic", "Classic Outlook on this PC",
-                 "Uses the classic Outlook desktop app on this Windows PC. No IT approval "
-                 "or sign-in needed, but Outlook must be open, and it doesn't work with "
-                 "the new Outlook.")):
-            tk.Radiobutton(conn, text=title, variable=self.conn_var, value=value,
-                           command=self.on_connection_change, font=FONT_B, bg=CARD,
-                           activebackground=CARD, anchor="w").pack(fill="x")
-            tk.Label(conn, text=desc, font=FONT_S, bg=CARD, fg=MUTED, anchor="w",
-                     justify="left", wraplength=780).pack(fill="x", padx=(24, 0),
-                                                          pady=(0, 6))
-
-        # Microsoft sign-in details (only shown for the Microsoft account option)
-        self.ms_frame = tk.Frame(conn, bg=CARD)
-        tk.Frame(self.ms_frame, bg=BORDER, height=1).pack(fill="x", pady=(2, 8))
+                 "Uses the classic Outlook app on this Windows PC. No IT approval or sign-in, "
+                 "but Outlook must be open, and it doesn't work with the new Outlook.")):
+            ttk.Radiobutton(body, text=title, variable=self.conn_var, value=value,
+                            command=self.on_connection_change, style="CardBold.TRadiobutton"
+                            ).pack(fill="x", anchor="w")
+            tk.Label(body, text=desc, font=FONT_S, bg=CARD, fg=MUTED, anchor="w",
+                     justify="left", wraplength=px(760)
+                     ).pack(fill="x", padx=(px(25), 0), pady=(0, px(8)))
+        self.ms_frame = tk.Frame(body, bg=CARD)
+        tk.Frame(self.ms_frame, bg=BORDER, height=1).pack(fill="x", pady=(px(2), px(10)))
         tk.Label(self.ms_frame, text="Your IT department gives you these two codes (leave "
-                                     "the Directory ID empty if they say so). Then click "
-                                     "Sign in.", font=FONT_S, bg=CARD, fg=MUTED,
-                 anchor="w", justify="left", wraplength=780).pack(fill="x", pady=(0, 4))
+                                     "the Directory ID empty if they say so).",
+                 font=FONT_S, bg=CARD, fg=MUTED, anchor="w", justify="left",
+                 wraplength=px(760)).pack(fill="x", pady=(0, px(4)))
         if not DEFAULT_CLIENT_ID:
-            entry("client_id", "App (client) ID", 42, parent=self.ms_frame)
-        entry("tenant_id", "Directory (tenant) ID", 42, parent=self.ms_frame)
+            entry(self.ms_frame, "client_id", "App (client) ID", 42)
+        entry(self.ms_frame, "tenant_id", "Directory (tenant) ID", 42)
         row_a = tk.Frame(self.ms_frame, bg=CARD)
-        row_a.pack(fill="x", pady=(6, 0))
+        row_a.pack(fill="x", pady=(px(8), 0))
         self.signin_btn = button(row_a, "Sign in", self.sign_in, "primary")
         self.signin_btn.pack(side="left")
-        button(row_a, "Sign out", self.do_sign_out).pack(side="left", padx=8)
+        button(row_a, "Sign out", self.do_sign_out).pack(side="left", padx=px(8))
         self.signin_status = tk.Label(row_a, text="", font=FONT_B, bg=CARD)
-        self.signin_status.pack(side="left", padx=4)
-
-        self.conn_tail = tk.Frame(conn, bg=CARD)
-        self.conn_tail.pack(fill="x", pady=(8, 0))
+        self.signin_status.pack(side="left", padx=px(4))
+        self.conn_tail = tk.Frame(body, bg=CARD)
+        self.conn_tail.pack(fill="x", pady=(px(10), 0))
         self.test_btn = button(self.conn_tail, "Test connection", self.test_connection)
         self.test_btn.pack(side="left")
         tk.Label(self.conn_tail, text="Only reads your inbox. Nothing is changed or sent.",
-                 font=FONT_S, bg=CARD, fg=MUTED).pack(side="left", padx=10)
+                 font=FONT_S, bg=CARD, fg=MUTED).pack(side="left", padx=px(10))
         self.show_connection_fields()
 
-        section("Reply template",
-                "Every suggested reply is wrapped in your greeting and sign-off. "
-                "Use the buttons to insert the sender's first name or your name.")
-        tpl = tk.Frame(wrap, bg=CARD, padx=14, pady=12, highlightthickness=1,
-                       highlightbackground=BORDER)
+        # --- Reply template
+        body = section("Reply template", "Every suggested reply is wrapped in your greeting "
+                                         "and sign-off.")
+        tpl = tk.Frame(body, bg=CARD)
         tpl.pack(fill="x")
-        tpl.columnconfigure(1, weight=1)
-        tpl.columnconfigure(3, weight=1)
+        tpl.columnconfigure(0, weight=1, uniform="t")
+        tpl.columnconfigure(1, weight=1, uniform="t")
 
-        def tpl_label(text, r, c):
-            tk.Label(tpl, text=text, font=FONT_B, bg=CARD, fg=TEXT, anchor="w"
-                     ).grid(row=r, column=c, columnspan=2, sticky="w", pady=(0, 3))
-
-        def insert_buttons(widget, r, c):
+        def insert_buttons(widget, col):
             row = tk.Frame(tpl, bg=CARD)
-            row.grid(row=r, column=c, columnspan=2, sticky="w", pady=(4, 0))
+            row.grid(row=2, column=col, sticky="w", pady=(px(6), 0))
             for lbl, token in (("+ Sender's first name", "{first_name}"),
                                ("+ My name", "{my_name}")):
-                link(row, lbl, lambda t=token: (widget.insert("insert", t),
-                                                update_preview())
-                     ).pack(side="left", padx=(0, 12))
+                button(row, lbl, lambda t=token: (widget.insert("insert", t), update_preview()),
+                       "chip", small=True).pack(side="left", padx=(0, px(6)))
 
-        tpl_label("Greeting (top)", 0, 0)
-        greet = tk.Text(tpl, font=FONT, height=2, wrap="word", relief="solid", bd=1,
-                        padx=8, pady=6)
+        tk.Label(tpl, text="Greeting", font=FONT_B, bg=CARD, fg=TEXT, anchor="w"
+                 ).grid(row=0, column=0, sticky="w", pady=(0, px(4)))
+        tk.Label(tpl, text="Sign-off", font=FONT_B, bg=CARD, fg=TEXT, anchor="w"
+                 ).grid(row=0, column=1, sticky="w", padx=(px(14), 0), pady=(0, px(4)))
+        greet = field_text(tpl, 2)
         greet.insert("1.0", s["before_text"])
-        greet.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=(0, 10))
-        insert_buttons(greet, 2, 0)
-        tpl_label("Sign-off (bottom)", 0, 2)
-        sign = tk.Text(tpl, font=FONT, height=2, wrap="word", relief="solid", bd=1,
-                       padx=8, pady=6)
+        greet.grid(row=1, column=0, sticky="nsew")
+        sign = field_text(tpl, 2)
         sign.insert("1.0", s["after_text"])
-        sign.grid(row=1, column=2, columnspan=2, sticky="nsew")
-        insert_buttons(sign, 2, 2)
+        sign.grid(row=1, column=1, sticky="nsew", padx=(px(14), 0))
+        insert_buttons(greet, 0)
+        insert_buttons(sign, 1)
+        for w in tpl.grid_slaves(row=2, column=1):
+            w.grid_configure(padx=(px(14), 0))
         self.fields["before_text"] = greet
         self.fields["after_text"] = sign
-
-        tk.Label(tpl, text="Preview", font=FONT_B, bg=CARD, fg=TEXT, anchor="w"
-                 ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(12, 3))
-        preview = tk.Label(tpl, text="", font=FONT, bg=EDIT_BG, fg=TEXT, anchor="nw",
-                           justify="left", padx=12, pady=10, wraplength=760)
-        preview.grid(row=4, column=0, columnspan=4, sticky="ew")
+        tk.Label(body, text="Preview", font=FONT_B, bg=CARD, fg=TEXT, anchor="w"
+                 ).pack(fill="x", pady=(px(16), px(4)))
+        preview = tk.Label(body, text="", font=FONT, bg=EDIT_BG, fg=TEXT, anchor="nw",
+                           justify="left", padx=px(14), pady=px(12), wraplength=px(760),
+                           highlightthickness=1, highlightbackground=BORDER)
+        preview.pack(fill="x")
 
         def update_preview(_evt=None):
-            fake = {"first_name": "Jennifer"}
             tmp = dict(self.settings, my_name=self.fields["my_name"].get() or "Your Name",
                        before_text=greet.get("1.0", "end").strip(),
                        after_text=sign.get("1.0", "end").strip())
-            preview.configure(text=compose(tmp, fake, "Thanks for sending the report over. "
-                                                      "I've got it and will review it this "
-                                                      "week."))
+            preview.configure(text=compose(tmp, {"first_name": "Jennifer"},
+                                           "Thanks for sending the report over. I've got it "
+                                           "and will review it this week."))
         for w in (greet, sign):
             w.bind("<KeyRelease>", update_preview)
         self.fields["my_name"].trace_add("write", lambda *a: update_preview())
         update_preview()
 
-        section("Rules for the assistant",
-                "Anything the assistant should always or never do. One rule per line.")
-        textbox("extra_rules", 4)
-        section("Never suggest replies to these senders",
-                "One email address (or part of one, like a company name) per line.")
-        textbox("ignored_senders", 3)
+        # --- Assistant rules
+        body = section("Assistant rules")
+        label(body, "Rules the assistant should always follow (one per line)")
+        textbox(body, "extra_rules", 4)
+        label(body, "Never suggest replies to these senders")
+        tk.Label(body, text="One email address, or part of one like @vendor.com, per line.",
+                 font=FONT_S, bg=CARD, fg=MUTED, anchor="w").pack(fill="x", pady=(0, px(4)))
+        textbox(body, "ignored_senders", 3)
 
-        section("Checking email",
-                "Which emails to look at is chosen at the top of the window.")
-        entry("auto_check_minutes", "Auto-check every (minutes, 0 = off)", 8)
-        check("only_direct", "Only suggest replies when I'm on the 'To' line (not just CC'd)")
-        check("confirm_each_send", "Show a final 'are you sure?' before sending each reply")
-        check("mark_read_after_send", "Mark the original email as read after I reply")
+        # --- Behaviour
+        body = section("Replying", "Which emails to look at and auto-refresh are set at the "
+                                   "top of the window.")
+        check(body, "only_direct", "Only suggest replies when I'm on the To line, not just CC'd")
+        check(body, "confirm_each_send", "Show the full reply one last time before it's sent")
+        check(body, "mark_read_after_send", "Mark the original email as read after I reply")
 
-        section("Updates", f"You're using version {current_version()}. Updates are only "
-                           "installed after you review and accept them.")
-        check("check_updates_on_start",
-              "Let me know when an update is available (nothing installs unless I accept)")
-        row_u = tk.Frame(wrap, bg=BG)
-        row_u.pack(fill="x", pady=(6, 0))
-        self.update_check_btn = button(row_u, "Check for updates now",
+        # --- Appearance
+        body = section("Appearance")
+        self.theme_var = tk.StringVar(value=s.get("theme", "system"))
+        trow = tk.Frame(body, bg=CARD)
+        trow.pack(fill="x")
+        for lbl, value in THEMES:
+            ttk.Radiobutton(trow, text=lbl, variable=self.theme_var, value=value,
+                            style="Card.TRadiobutton",
+                            command=lambda: self.switch_theme(self.theme_var.get())
+                            ).pack(side="left", padx=(0, px(22)))
+
+        # --- Updates
+        body = section("Updates", f"You're using version {current_version()}. Updates are "
+                                  "only installed after you review and accept them.")
+        check(body, "check_updates_on_start",
+              "Tell me when an update is available (nothing installs unless I accept)")
+        self.update_check_btn = button(body, "Check for updates now",
                                        lambda: self.check_for_updates(manual=True))
-        self.update_check_btn.pack(side="left")
+        self.update_check_btn.pack(anchor="w", pady=(px(10), 0))
 
-        section("Advanced")
-        entry("model", "AI model name", 24)
-
-        row = tk.Frame(wrap, bg=BG)
-        row.pack(fill="x", pady=(20, 20))
-        button(row, "Save settings", self.save_settings, "primary").pack(side="left")
-        button(row, "Restore defaults", self.restore_defaults).pack(side="left", padx=8)
+        # --- Advanced
+        body = section("Advanced")
+        entry(body, "model", "AI model name", 24)
+        tk.Frame(wrap, bg=BG, height=px(16)).pack()
         self.refresh_account()
 
     def save_settings(self, quiet=False):
@@ -2033,12 +2437,9 @@ class EmailAssistant:
                 new[k] = v.strip() if isinstance(v, str) and k in ("client_id",
                                                                      "tenant_id") else v
         try:
-            new["auto_check_minutes"] = max(0, int(float(new["auto_check_minutes"])))
+            new["auto_check_minutes"] = max(0, int(float(new.get("auto_check_minutes") or 0)))
         except ValueError:
-            if not quiet:
-                messagebox.showwarning("Email Assistant",
-                                       "Auto-check minutes must be a number.")
-            return
+            new["auto_check_minutes"] = 0
         new["model"] = (new["model"] or "").strip() or DEFAULT_SETTINGS["model"]
         if sign_in_ids(new) != sign_in_ids(self.settings):
             new["account"] = ""          # different Microsoft app/tenant: sign in again
@@ -2063,6 +2464,27 @@ class EmailAssistant:
         self.render()
         self.set_status("Settings reset to defaults.")
 
+    # ----- appearance -----
+    def switch_theme(self, choice):
+        if self.checking or self.busy_ids or self.updating or self.signing_in:
+            messagebox.showinfo("Email Assistant", "Please wait until the current task "
+                                                   "finishes, then switch the theme.")
+            try:
+                self.theme_var.set(self.settings.get("theme", "system"))
+            except AttributeError:
+                pass
+            return
+        on_settings = self.tabs.select() == str(self.set_tab)
+        self.save_settings(quiet=True)          # keep anything typed in Settings
+        self.settings["theme"] = choice
+        save_json(SETTINGS_FILE, self.settings)
+        self.save_now()
+        self.rebuild = True
+        self.rebuild_geometry = self.root.geometry()
+        self.rebuild_tab = "settings" if on_settings else None
+        self.stop_timers()
+        self.root.destroy()                     # main() reopens it in the new colours
+
     # ----- actions -----
     def test_connection(self):
         self.save_settings(quiet=True)
@@ -2085,32 +2507,77 @@ class EmailAssistant:
         self.settings["include_read"] = bool(self.include_read_var.get())
         save_json(SETTINGS_FILE, self.settings)
 
-    def start_check(self):
+    def start_check(self, auto=False):
         if self.checking:
             return
         self.remember_check_options()
         self.checking = True
+        self.auto_running = auto
+        if self._auto_job:                     # the timer restarts after this check
+            self.root.after_cancel(self._auto_job)
+            self._auto_job = None
+        self.next_label.configure(text="")
         self.check_btn.configure(state="disabled", text="Checking...")
-        self.set_status("Checking the AI is ready...")
+        self.set_status("Auto-refresh: checking for new email..." if auto
+                        else "Checking the AI is ready...")
+        settings = dict(self.settings)
+        if auto:
+            mins = int(settings.get("auto_check_minutes") or 0)
+            settings["_min_lookback_hours"] = (mins * 2 + 10) / 60.0
         processed = set(self.data["processed"])
-        threading.Thread(target=check_worker,
-                         args=(dict(self.settings), processed, self.events),
+        threading.Thread(target=check_worker, args=(settings, processed, self.events),
                          daemon=True).start()
 
-    def schedule_auto(self):
+    def on_refresh_change(self):
+        mins = dict(REFRESH_CHOICES).get(self.refresh_var.get(), 0)
+        self.settings["auto_check_minutes"] = mins
+        save_json(SETTINGS_FILE, self.settings)
+        self.schedule_auto()
+        if mins:
+            self.set_status(f"Auto-refresh is on: Email Assistant will check for new email "
+                            f"every {mins if mins < 60 else 1} "
+                            f"{'minutes' if mins < 60 else 'hour'} while it's open. "
+                            "Nothing is ever sent automatically.")
+        else:
+            self.set_status("Auto-refresh is off.")
+
+    def schedule_auto(self, delay_minutes=None):
         if self._auto_job:
             self.root.after_cancel(self._auto_job)
             self._auto_job = None
         mins = int(self.settings.get("auto_check_minutes") or 0)
-        if mins > 0:
-            self._auto_job = self.root.after(mins * 60000, self._auto_tick)
+        if mins <= 0:
+            self.next_label.configure(text="")
+            return
+        wait = delay_minutes if delay_minutes is not None else mins
+        when = datetime.now() + timedelta(minutes=wait)
+        self.next_label.configure(
+            text=f"Next check {when.strftime('%I:%M %p').lstrip('0')}")
+        self._auto_job = self.root.after(int(wait * 60000), self._auto_tick)
+
+    def user_is_editing(self):
+        """True while the cursor is in a text box (e.g. editing a reply)."""
+        try:
+            w = self.root.focus_get()
+        except (KeyError, tk.TclError):
+            return False
+        return isinstance(w, (tk.Text, tk.Entry)) and w.winfo_toplevel() is self.root \
+            and not str(w).startswith(str(self.set_tab))
 
     def _auto_tick(self):
         self._auto_job = None
-        if not self.checking and (uses_classic(self.settings)
-                                  or signed_in_user(self.settings)):
-            self.start_check()
-        self.schedule_auto()
+        if self.checking or self.updating or self.busy_ids:
+            self.schedule_auto(delay_minutes=1)
+            return
+        if not uses_classic(self.settings) and not signed_in_user(self.settings):
+            self.schedule_auto()
+            return
+        if self.user_is_editing():
+            # Don't redraw the list under someone who's typing; try again shortly
+            self.next_label.configure(text="Waiting until you finish editing")
+            self._auto_job = self.root.after(60000, self._auto_tick)
+            return
+        self.start_check(auto=True)
 
     def open_original(self, e):
         if uses_classic(self.settings):
@@ -2243,41 +2710,54 @@ class EmailAssistant:
         win = tk.Toplevel(self.root)
         win.title(title)
         win.configure(bg=BG)
-        win.geometry(f"{width}x{height}")
         win.transient(self.root)
+        center_window(win, width, height)
+        dark_title_bar(win)
         return win
 
-    def view_email(self, e):
-        win = self.dialog(e["subject"][:70] or "Email", 700, 600)
-        head = tk.Frame(win, bg=CARD, padx=18, pady=14)
+    def dialog_header(self, win, e, title):
+        head = tk.Frame(win, bg=CARD, padx=px(22), pady=px(16))
         head.pack(fill="x")
-        row = tk.Frame(head, bg=CARD)
-        row.pack(fill="x")
-        tk.Label(row, text=e["from"], font=FONT_H, bg=CARD, fg=TEXT).pack(side="left")
-        self.urgency_badge(row, e)
-        tk.Label(head, text=f"{e['address']}  ·  {e['received']}", font=FONT_S,
+        avatar(head, e["from"], 42).pack(side="left", padx=(0, px(14)))
+        who = tk.Frame(head, bg=CARD)
+        who.pack(side="left", fill="x", expand=True)
+        r1 = tk.Frame(who, bg=CARD)
+        r1.pack(fill="x")
+        tk.Label(r1, text=title, font=FONT_H, bg=CARD, fg=TEXT).pack(side="left")
+        self.urgency_badge(r1, e)
+        tk.Label(who, text=f"{e['address']}  ·  {e['received']}", font=FONT_S,
                  bg=CARD, fg=MUTED, anchor="w").pack(fill="x")
-        tk.Label(head, text=e["subject"], font=FONT_B, bg=CARD, fg=TEXT, anchor="w",
-                 justify="left", wraplength=640).pack(fill="x", pady=(8, 0))
+        tk.Label(who, text=e["subject"], font=FONT_B, bg=CARD, fg=TEXT, anchor="w",
+                 justify="left", wraplength=px(640)).pack(fill="x", pady=(px(6), 0))
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
-        body_frame = tk.Frame(win, bg=BG, padx=12, pady=10)
+
+    def view_email(self, e):
+        win = self.dialog(e["subject"][:70] or "Email", 720, 620)
+        self.dialog_header(win, e, e["from"])
+        foot = tk.Frame(win, bg=BG, padx=px(22))
+        foot.pack(fill="x", side="bottom", pady=(0, px(16)))
+        body_frame = tk.Frame(win, bg=BG, padx=px(22), pady=px(14))
         body_frame.pack(fill="both", expand=True)
-        txt = tk.Text(body_frame, font=FONT, wrap="word", bg=CARD, fg=TEXT, relief="flat",
-                      padx=14, pady=12, highlightthickness=1, highlightbackground=BORDER)
-        sb = ttk.Scrollbar(body_frame, orient="vertical", command=txt.yview)
+        holder = tk.Frame(body_frame, bg=CARD, highlightthickness=1,
+                          highlightbackground=BORDER)
+        holder.pack(fill="both", expand=True)
+        txt = tk.Text(holder, font=FONT, wrap="word", bg=CARD, fg=TEXT, relief="flat",
+                      bd=0, highlightthickness=0, padx=px(16), pady=px(14),
+                      selectbackground=ACCENT_SOFT, selectforeground=TEXT, spacing1=px(1),
+                      spacing3=px(2))
+        sb = ttk.Scrollbar(holder, orient="vertical", command=txt.yview,
+                           style="Thin.Vertical.TScrollbar")
         txt.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
+        sb.pack(side="right", fill="y", padx=(0, px(2)), pady=px(2))
         txt.pack(side="left", fill="both", expand=True)
         txt.insert("1.0", "Loading...")
         txt.configure(state="disabled")
-        btns = tk.Frame(win, bg=BG, padx=12, pady=(0))
-        btns.pack(fill="x", pady=(0, 12))
-        button(btns, "Write a reply with AI",
+        button(foot, "Write a reply with AI",
                lambda: (win.destroy(), self.rewrite(e, from_needs=True)), "primary"
                ).pack(side="left")
-        button(btns, "Open in Outlook", lambda: self.open_original(e)
-               ).pack(side="left", padx=8)
-        button(btns, "Close", win.destroy).pack(side="right")
+        button(foot, "Open in Outlook", lambda: self.open_original(e)
+               ).pack(side="left", padx=px(8))
+        button(foot, "Close", win.destroy, "ghost").pack(side="right")
         settings = dict(self.settings)
 
         def done(body, err):
@@ -2310,45 +2790,45 @@ class EmailAssistant:
         existing = getattr(self, "_picker", None)
         if existing is not None and existing.winfo_exists():
             existing.destroy()
-        win = self.dialog(f"Replies for {e['from']}", 860, 640)
+        win = self.dialog(f"Reply to {e['from']}", 900, 700)
         self._picker = win
         state = {"body": None, "busy": False, "vibe": None, "gen": 0}
         entry = dict(e)
+        self.dialog_header(win, e, f"Reply to {e['from']}")
 
-        head = tk.Frame(win, bg=CARD, padx=18, pady=12)
-        head.pack(fill="x")
-        row = tk.Frame(head, bg=CARD)
-        row.pack(fill="x")
-        tk.Label(row, text=f"Reply to {e['from']}", font=FONT_H, bg=CARD, fg=TEXT
-                 ).pack(side="left")
-        self.urgency_badge(row, e)
-        tk.Label(head, text=e["subject"], font=FONT, bg=CARD, fg=MUTED, anchor="w",
-                 justify="left", wraplength=800).pack(fill="x", pady=(2, 0))
-        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
-
-        body_frame = tk.Frame(win, bg=BG, padx=18, pady=10)
+        foot = tk.Frame(win, bg=BG, padx=px(22))
+        foot.pack(fill="x", side="bottom", pady=(0, px(16)))
+        body_frame = tk.Frame(win, bg=BG, padx=px(22), pady=px(14))
         body_frame.pack(fill="both", expand=True)
 
-        # Vibe buttons
-        tk.Label(body_frame, text="Pick a vibe for two new options:", font=FONT_B, bg=BG,
+        tk.Label(body_frame, text="Pick a vibe for two new options", font=FONT_B, bg=BG,
                  fg=TEXT, anchor="w").pack(fill="x")
         chips = tk.Frame(body_frame, bg=BG)
-        chips.pack(fill="x", pady=(4, 6))
+        chips.pack(fill="x", pady=(px(6), px(8)))
         chip_btns = {}
+        rows = [tk.Frame(chips, bg=BG), tk.Frame(chips, bg=BG)]
+        for r in rows:
+            r.pack(fill="x", pady=px(3))
         for i, (label, instruction) in enumerate(VIBES):
-            b = tk.Button(chips, text=label, font=FONT, bg=CARD, fg=TEXT, relief="solid",
-                          bd=1, padx=10, pady=3, cursor="hand2", activebackground="#eef2ff",
-                          command=lambda l=label, ins=instruction: generate(ins, l))
-            b.grid(row=i // 5, column=i % 5, padx=(0, 6), pady=3, sticky="w")
+            b = button(rows[0 if i < 5 else 1], label,
+                       lambda l=label, ins=instruction: generate(ins, l), "chip", small=True)
+            b.pack(side="left", padx=(0, px(6)))
             chip_btns[label] = b
 
         custom_row = tk.Frame(body_frame, bg=BG)
-        custom_row.pack(fill="x", pady=(2, 8))
-        tk.Label(custom_row, text="Or describe it:", font=FONT, bg=BG, fg=TEXT
-                 ).pack(side="left")
+        custom_row.pack(fill="x", pady=(px(2), px(10)))
         custom = tk.StringVar()
-        ce = tk.Entry(custom_row, textvariable=custom, font=FONT, relief="solid", bd=1)
-        ce.pack(side="left", fill="x", expand=True, padx=8, ipady=3)
+        ce = field_entry(custom_row, custom)
+        ce.pack(side="left", fill="x", expand=True, ipady=px(6), padx=(0, px(8)))
+        hint = "Or describe what you want, e.g. say yes but suggest 3pm"
+        ce.insert(0, hint)
+        ce.configure(fg=SUBTLE)
+
+        def clear_hint(_e=None):
+            if ce.get() == hint:
+                ce.delete(0, "end")
+                ce.configure(fg=TEXT)
+        ce.bind("<FocusIn>", clear_hint)
         ce.bind("<Return>", lambda ev: custom_generate())
         gen_custom_btn = button(custom_row, "Generate", lambda: custom_generate())
         gen_custom_btn.pack(side="left")
@@ -2356,17 +2836,20 @@ class EmailAssistant:
         status = tk.Label(body_frame, text="", font=FONT_S, bg=BG, fg=MUTED, anchor="w")
         status.pack(fill="x")
         cards = tk.Frame(body_frame, bg=BG)
-        cards.pack(fill="both", expand=True, pady=(6, 0))
+        cards.pack(fill="both", expand=True, pady=(px(8), 0))
         cards.columnconfigure(0, weight=1, uniform="c")
         cards.columnconfigure(1, weight=1, uniform="c")
+        cards.rowconfigure(0, weight=1)
 
-        foot = tk.Frame(win, bg=BG, padx=18)
-        foot.pack(fill="x", pady=(0, 14))
+        def custom_text():
+            t = custom.get().strip()
+            return "" if t == hint else t
+
         more_btn = button(foot, "Two more like these", lambda: generate(
-            dict(VIBES).get(state["vibe"], custom.get().strip()) if state["vibe"] != "custom"
-            else custom.get().strip(), state["vibe"]))
+            custom_text() if state["vibe"] == "custom" else dict(VIBES).get(state["vibe"], ""),
+            state["vibe"]))
         more_btn.pack(side="left")
-        button(foot, "Close", win.destroy).pack(side="right")
+        button(foot, "Close", win.destroy, "ghost").pack(side="right")
 
         def set_busy(busy, text=""):
             state["busy"] = busy
@@ -2376,34 +2859,46 @@ class EmailAssistant:
 
         def highlight(label):
             for l, b in chip_btns.items():
-                on = (l == label)
-                b.configure(bg="#dbeafe" if on else CARD, fg=ACCENT if on else TEXT,
-                            font=FONT_B if on else FONT)
+                b.set_kind("chip_on" if l == label else "chip")
 
         def show_options(options):
             for w in cards.winfo_children():
                 w.destroy()
+            before = fill(self.settings["before_text"], e, self.settings).strip()
+            after = fill(self.settings["after_text"], e, self.settings).strip()
             for col, opt in enumerate(options):
                 outer = tk.Frame(cards, bg=BORDER)
-                outer.grid(row=0, column=col, sticky="nsew", padx=(0, 10) if col == 0 else 0)
-                card = tk.Frame(outer, bg=CARD, padx=12, pady=10)
+                outer.grid(row=0, column=col, sticky="nsew",
+                           padx=(0, px(12)) if col == 0 else 0)
+                card = tk.Frame(outer, bg=CARD, padx=px(16), pady=px(14))
                 card.pack(fill="both", expand=True, padx=1, pady=1)
-                tk.Label(card, text=f"Option {'AB'[col]}  ·  {opt['style']}",
-                         font=FONT_B, bg=CARD, fg=ACCENT, anchor="w").pack(fill="x")
-                before = fill(self.settings["before_text"], e, self.settings).strip()
-                after = fill(self.settings["after_text"], e, self.settings).strip()
+                head = tk.Frame(card, bg=CARD)
+                head.pack(fill="x")
+                pill(head, f"Option {'AB'[col]}", *B_PURPLE).pack(side="left")
+                tk.Label(head, text=opt["style"], font=FONT_B, bg=CARD, fg=TEXT
+                         ).pack(side="left", padx=(px(8), 0))
+                bot = tk.Frame(card, bg=CARD)
+                bot.pack(fill="x", side="bottom", pady=(px(12), 0))
+                box = tk.Frame(card, bg=EDIT_BG, highlightthickness=1,
+                               highlightbackground=FIELD_BORDER, padx=px(12), pady=px(10))
+                box.pack(fill="both", expand=True, pady=(px(10), 0))
                 if before:
-                    tk.Label(card, text=before, font=FONT_S, bg=CARD, fg=MUTED,
-                             anchor="w", justify="left").pack(fill="x", pady=(6, 2))
-                t = tk.Text(card, font=FONT, wrap="word", height=8, bg=EDIT_BG, fg=TEXT,
-                            relief="flat", padx=8, pady=6, undo=True)
+                    tk.Label(box, text=before, font=FONT, bg=EDIT_BG, fg=MUTED,
+                             anchor="w", justify="left").pack(fill="x", pady=(0, px(4)))
+                t = tk.Text(box, font=FONT, wrap="word", height=6, bg=EDIT_BG, fg=TEXT,
+                            relief="flat", bd=0, highlightthickness=0, padx=0, pady=px(2),
+                            undo=True, insertbackground=TEXT, selectbackground=ACCENT_SOFT,
+                            selectforeground=TEXT)
                 t.insert("1.0", opt["reply"])
                 t.pack(fill="both", expand=True)
                 if after:
-                    tk.Label(card, text=after, font=FONT_S, bg=CARD, fg=MUTED,
-                             anchor="w", justify="left").pack(fill="x", pady=(2, 6))
-                button(card, "Use this reply", lambda t=t: use(t.get("1.0", "end").strip()),
-                       "good").pack(anchor="w", pady=(6, 0))
+                    tk.Label(box, text=after, font=FONT, bg=EDIT_BG, fg=MUTED,
+                             anchor="w", justify="left").pack(fill="x", pady=(px(4), 0))
+                t.bind("<FocusIn>", lambda ev, b=box: b.configure(highlightbackground=ACCENT))
+                t.bind("<FocusOut>",
+                       lambda ev, b=box: b.configure(highlightbackground=FIELD_BORDER))
+                button(bot, "Use this reply", lambda t=t: use(t.get("1.0", "end").strip()),
+                       "good").pack(side="left")
 
         def use(text):
             if not text:
@@ -2419,8 +2914,8 @@ class EmailAssistant:
             state["gen"] += 1
             gen = state["gen"]
             highlight(label)
-            set_busy(True, f"Writing two {label.lower() + ' ' if label and label != 'custom' else ''}"
-                           "options...")
+            what = f"{label.lower()} " if label and label != "custom" else ""
+            set_busy(True, f"Writing two {what}options...")
             settings = dict(self.settings)
 
             def done(res, err):
@@ -2428,18 +2923,18 @@ class EmailAssistant:
                     return
                 set_busy(False)
                 if err:
-                    status.configure(text="Couldn't write replies. " +
+                    status.configure(text="Couldn't write replies: " +
                                           friendly_error(err).split("\n")[0])
                     return
                 state["body"], options = res
                 show_options(options)
                 status.configure(text="Edit either option if you like, then click "
-                                      "'Use this reply'.")
+                                      "Use this reply.")
             self.run_bg(lambda: generate_options(settings, entry, direction, state["body"]),
                         done)
 
         def custom_generate():
-            text = custom.get().strip()
+            text = custom_text()
             if text:
                 generate(text, "custom")
 
@@ -2569,6 +3064,15 @@ class EmailAssistant:
                     changed = True
                 elif kind == "done":
                     c = ev[1]
+                    if self.auto_running:
+                        new = c["simple"] + c["needs_you"]
+                        when = datetime.now().strftime('%I:%M %p').lstrip('0')
+                        self.finish_check(
+                            f"Auto-refreshed at {when}: " + (
+                                f"{c['simple']} new suggested repl"
+                                f"{'y' if c['simple'] == 1 else 'ies'}, {c['needs_you']} "
+                                "need your attention." if new else "no new email to answer."))
+                        continue
                     msg = (f"Checked {self.settings.get('check_range', DEFAULT_RANGE).lower()} "
                            f"at {datetime.now().strftime('%I:%M %p').lstrip('0')}: "
                            f"{c['simple']} new suggested repl{'y' if c['simple'] == 1 else 'ies'}, "
@@ -2578,11 +3082,20 @@ class EmailAssistant:
                         msg += (f" Stopped after {MAX_EMAILS_PER_CHECK} emails; "
                                 "click Check again to continue.")
                     self.finish_check(msg)
+                elif kind == "need_signin" and self.auto_running:
+                    if isinstance(ev[1], SignInNeeded):
+                        self.remember_account("")
+                    self.finish_check("Auto-refresh paused: please sign in again under "
+                                      "Settings > Connection.")
                 elif kind == "need_signin":
                     self.finish_check("Not signed in.")
                     if isinstance(ev[1], SignInNeeded):
                         self.remember_account("")
                     self.ask_to_sign_in(then=self.start_check)
+                elif kind == "error" and self.auto_running:
+                    first = ev[1].split("\n")[0]
+                    self.finish_check(f"Auto-refresh couldn't check just now: {first} "
+                                      "It will try again at the next interval.")
                 elif kind == "error":
                     self.finish_check("Check stopped.")
                     messagebox.showwarning("Email Assistant", ev[1])
@@ -2616,27 +3129,58 @@ class EmailAssistant:
         if changed:
             self.save_now()
             self.render()
-        self.root.after(150, self.poll)
+        self._poll_job = self.root.after(150, self.poll)
 
     def finish_check(self, msg):
         self.checking = False
+        self.auto_running = False
         self.check_btn.configure(state="normal", text="Check emails")
         self.set_status(msg)
+        self.schedule_auto()          # next automatic check counts from now
+
+    def stop_timers(self):
+        for job in (getattr(self, "_poll_job", None), self._auto_job, self._save_job):
+            if job:
+                try:
+                    self.root.after_cancel(job)
+                except tk.TclError:
+                    pass
+        self._poll_job = self._auto_job = self._save_job = None
 
     def on_close(self):
         if self._save_job:
             self.save_now()
+        self.stop_timers()
         self.root.destroy()
 
 
-def main():
-    root = tk.Tk()
+def enable_crisp_text():
+    """Tell Windows this app handles high-DPI screens, so text isn't blurry."""
+    if sys.platform != "win32":
+        return
     try:
-        root.tk.call("tk", "scaling", root.winfo_fpixels("1i") / 72.0)
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
     except Exception:
         pass
-    EmailAssistant(root)
-    root.mainloop()
+
+
+def main():
+    enable_crisp_text()
+    geometry, tab = None, None
+    while True:
+        apply_palette(load_json(SETTINGS_FILE, DEFAULT_SETTINGS).get("theme", "system"))
+        root = tk.Tk()
+        setup_theme(root)
+        app = EmailAssistant(root, geometry=geometry, start_tab=tab)
+        dark_title_bar(root)
+        root.mainloop()
+        if not app.rebuild:                    # closed normally
+            break
+        geometry, tab = app.rebuild_geometry, app.rebuild_tab
 
 
 if __name__ == "__main__":

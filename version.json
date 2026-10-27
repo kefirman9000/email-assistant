@@ -1,4 +1,4 @@
 {
-  "version": "2.2.0",
-  "notes": "New reply picker! 'Rewrite with AI' now shows two different replies side by side. Click a vibe (Happier, More frank, Friendly acceptance, Friendly denial, More formal, Shorter, Apologetic and more) to get two new options in that style, or describe what you want. Edit either one and click 'Use this reply'."
+  "version": "2.3.0",
+  "notes": "A fresh new look: sharper text on high-resolution screens, rounded buttons, colourful sender avatars, cleaner email cards and a tidier Settings page with a Save bar that's always visible.\n\nNew: Dark mode (Settings > Appearance, or the switch at the top), auto-refresh every 5 to 60 minutes, and windows that open in the middle of the screen."
 }
