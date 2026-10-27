@@ -40,7 +40,7 @@ try:
 except ImportError:
     pythoncom = None
 
-APP_VERSION = "2.1.1"                         # bump this for every release
+APP_VERSION = "2.1.2"                         # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 # Microsoft sign-in. IT gives you these two values (see README, "IT setup").
@@ -653,6 +653,15 @@ def outlook_send_failure(exc, step, first_step=None):
     elif inner == -2147467260 or "abort" in text.lower():   # E_ABORT
         hint = ("Outlook blocked it. If you saw a warning like 'A program is trying to "
                 "send an email on your behalf', click Allow and try again.")
+    elif step == "creating the email":
+        hint = ("Outlook can read your mail but won't let programs create new emails. "
+                "The most common reason is that Office isn't activated or licensed: "
+                "Outlook then switches to a limited mode where new emails and replies "
+                "are blocked.\n\n"
+                "To check: click 'New Email' in Outlook yourself. If it's greyed out, or "
+                "Outlook shows an 'Unlicensed product' or 'Activate' message, that's the "
+                "cause. Then use Settings > Connection > Microsoft account instead, which "
+                "doesn't depend on the Outlook app at all.")
     elif step == "sending it":
         hint = ("Outlook wouldn't send it. Common causes:\n"
                 "  - A security warning from Outlook is waiting (it may be hidden behind "
@@ -698,7 +707,8 @@ class ClassicOutlook:
         for make in (lambda: win32com.client.Dispatch("Outlook.Application"),
                      lambda: win32com.client.dynamic.Dispatch("Outlook.Application")):
             try:
-                self.ns = make().GetNamespace("MAPI")
+                self.app = make()
+                self.ns = self.app.GetNamespace("MAPI")
                 self.inbox = self.ns.GetDefaultFolder(OL_INBOX)
                 return
             except Exception as e:
@@ -804,10 +814,28 @@ class ClassicOutlook:
         raise RuntimeError("Outlook couldn't match your own address "
                            f"(tried: {', '.join(tried) or 'nothing'})")
 
+    def _new_mail(self):
+        """Create a blank email. Outlook sometimes refuses one method but accepts
+        another, so try a few before giving up."""
+        attempts = [
+            lambda: self.app.CreateItem(0),
+            lambda: (self.ns.Logon("", "", False, False), self.app.CreateItem(0))[1],
+            lambda: self.ns.GetDefaultFolder(16).Items.Add("IPM.Note"),   # in Drafts
+        ]
+        last = None
+        for make in attempts:
+            try:
+                mail = make()
+                if mail is not None:
+                    return mail
+            except Exception as e:
+                last = e
+        raise last or RuntimeError("Outlook didn't create the email")
+
     def _send_one_test(self, to_addr, subject, body, importance, keep_copy):
         step = "creating the email"
         try:
-            mail = self.ns.Application.CreateItem(0)
+            mail = self._new_mail()
             step = "filling in the subject and text"
             mail.Subject = f"{TEST_TAG} {subject}"
             mail.Body = body
@@ -837,10 +865,13 @@ class ClassicOutlook:
             raise GraphError(outlook_send_failure(e, getattr(e, "step", "?"), first_step))
 
     def create_reply_draft(self, msg_id, text):
-        reply = self.ns.GetItemFromID(msg_id).Reply()
-        reply.HTMLBody = insert_into_html(reply.HTMLBody or "", text)
-        reply.Save()
-        return reply.EntryID
+        try:
+            reply = self.ns.GetItemFromID(msg_id).Reply()
+            reply.HTMLBody = insert_into_html(reply.HTMLBody or "", text)
+            reply.Save()
+            return reply.EntryID
+        except Exception as e:
+            raise GraphError(outlook_send_failure(e, "creating the email"))
 
     def send_draft(self, draft_id):
         try:
