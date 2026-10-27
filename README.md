@@ -2,13 +2,19 @@
 
 A simple app that reads your work email, suggests replies to the easy ones using an AI that runs entirely on your own computer, and lets you review, edit and approve each reply before it's sent.
 
-It connects through **Microsoft's official mail service (Microsoft Graph)**, so it works with the **new Outlook**, classic Outlook, Outlook on the web and Outlook for Mac. Outlook doesn't even need to be open.
+It can connect two ways (choose under **Settings → Connection**):
+
+| | **Microsoft account** (recommended) | **Classic Outlook on this PC** |
+|---|---|---|
+| Works with | New Outlook, classic Outlook, Outlook on the web, Mac | Classic Outlook desktop app on Windows only |
+| Setup | One-time IT approval, then sign in | Nothing extra, just have classic Outlook open |
+| Outlook must be open | No | Yes |
 
 **Nothing is ever sent without you clicking "Approve & send".**
 
 ## What you need
 
-- A work Microsoft 365 email account, and **IT approval** for the app (one-time, see [IT setup](#it-setup) below)
+- A work Microsoft 365 email account. For the **Microsoft account** connection, IT approves the app once (see [IT setup](#it-setup)). For **Classic Outlook on this PC**, you just need the classic Outlook desktop app.
 - **Python** – <https://www.python.org/downloads/> (tick *"Add python.exe to PATH"* while installing)
 - **Ollama** – <https://ollama.com/download> (the AI runs locally; your email is never sent to an AI company)
 
@@ -19,7 +25,9 @@ It connects through **Microsoft's official mail service (Microsoft Graph)**, so 
 3. Double-click **Start Email Assistant**.
 4. On the **Settings** tab:
    - Fill in your name.
-   - Under **Microsoft account**, enter the two codes from IT and click **Sign in**. A browser window opens; sign in with your work account.
+   - Under **Connection**, pick how to reach your email:
+     - **Microsoft account**: enter the two codes from IT and click **Sign in**. A browser window opens; sign in with your work account.
+     - **Classic Outlook on this PC**: nothing else to do. Keep Outlook open.
    - Check your greeting and sign-off under **Reply template**, then click **Save settings**.
 5. Click **Test connection** to make sure everything works.
 
@@ -43,13 +51,13 @@ On the **Inbox** tab, click **Send test emails**. Pick from ready-made samples (
 
 ## Updates
 
-The app checks for updates when it starts (and from **Settings → Check for updates now**). When a new version is out, it shows what's new and asks before installing. It then downloads the update, keeps a backup of the old version in the `backup` folder, installs, and restarts. Your settings, sign-in and pending replies are kept.
+**Updates are only installed when you accept them.** When the app starts, it quietly checks for a new version. If there is one, an orange **Update available** button appears at the top. Nothing else happens until you click it, read what's new, and choose **Yes**. Only then does it download the update, keep a backup of the old version in the `backup` folder, install, and restart. Your settings, sign-in and pending replies are kept. You can also check any time from **Settings → Check for updates now**, or turn off the startup check there.
 
 ---
 
 ## IT setup
 
-*For the company's Microsoft 365 / Entra ID administrator. Takes about 5 minutes.*
+*Only needed for the **Microsoft account** connection. For the company's Microsoft 365 / Entra ID administrator. Takes about 5 minutes.*
 
 **What the app is:** a desktop program that runs on the user's PC. It signs in as the user (delegated permissions only), reads and replies to **that user's own mailbox**, and runs its AI model locally through Ollama. There is no server, and no mail content is sent anywhere except Microsoft. Source code: <https://github.com/kefirman9000/email-assistant>.
 
@@ -96,7 +104,7 @@ Files that are never committed or overwritten by updates: `settings.json`, `assi
 
 | Setting | What it does |
 |---|---|
-| Microsoft account | App (client) ID and Directory (tenant) ID from IT, plus Sign in / Sign out / Test connection |
+| Connection | **Microsoft account** (App ID and Directory ID from IT, then Sign in) or **Classic Outlook on this PC**. Test connection works for both |
 | Reply template | Greeting and sign-off wrapped around every suggestion. `{first_name}` = sender's first name, `{my_name}` = your name. Live preview included |
 | Rules for the assistant | Extra do's and don'ts for the AI |
 | Never suggest replies to these senders | Addresses or partial matches (e.g. `@vendor.com`) to always skip |

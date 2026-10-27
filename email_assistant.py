@@ -28,18 +28,19 @@ from datetime import datetime, timedelta, timezone
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
+# Each connection type needs its own add-on; neither is required to start the app.
 try:
-    import msal
+    import msal                      # Microsoft account (new Outlook / Graph)
 except ImportError:
-    _r = tk.Tk()
-    _r.withdraw()
-    messagebox.showerror(
-        "Email Assistant",
-        "A required part is missing (msal).\n\n"
-        "Please double-click 'Setup.bat' in this folder first, then try again.")
-    sys.exit(1)
+    msal = None
+try:
+    import pythoncom                 # classic Outlook on this PC (Windows only)
+    import win32com.client
+    import win32com.client.dynamic
+except ImportError:
+    pythoncom = None
 
-APP_VERSION = "2.0.0"                          # bump this for every release
+APP_VERSION = "2.1.0"                         # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 # Microsoft sign-in. IT gives you these two values (see README, "IT setup").
@@ -79,6 +80,7 @@ DEFAULT_SETTINGS = {
     "client_id": "",
     "tenant_id": "",
     "account": "",          # who is signed in (shown in the window)
+    "connection": "microsoft",   # "microsoft" (Graph) or "classic" (Outlook on this PC)
 }
 
 AUTOMATED_SENDERS = ["noreply", "no-reply", "donotreply", "do-not-reply",
@@ -287,6 +289,9 @@ def _persist(app):
 
 
 def msal_app(settings):
+    if msal is None:
+        raise GraphError("Signing in to Microsoft needs an add-on that isn't installed "
+                         "(msal). Double-click Setup.bat, then try again.")
     cid, tenant = sign_in_ids(settings)
     if not cid:
         raise SetupNeeded()
@@ -544,6 +549,271 @@ class Graph:
             pass   # the reply already went out; tagging is a nice-to-have
 
 
+# ---------------------------------------------------------------------------
+# Classic Outlook on this PC (Windows desktop Outlook, via COM)
+# ---------------------------------------------------------------------------
+OL_INBOX, OL_MAIL, OL_TO = 6, 43, 1
+PR_HEADERS = "http://schemas.microsoft.com/mapi/proptag/0x007D001F"
+OL_IMPORTANCE = {0: "low", 1: "normal", 2: "high"}
+
+
+class OutlookConnectError(GraphError):
+    """Classic Outlook isn't reachable; the message says why and what to do."""
+
+
+def running_processes():
+    """Lower-case names of running programs (Windows), or an empty set."""
+    try:
+        res = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True,
+                             text=True, timeout=15,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return {line.split('","')[0].strip('"').lower()
+                for line in res.stdout.splitlines() if line.strip()}
+    except Exception:
+        return set()
+
+
+def classic_outlook_installed():
+    try:
+        import winreg
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                winreg.CloseKey(winreg.OpenKey(
+                    hive, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE"))
+                return True
+            except OSError:
+                pass
+        try:
+            winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,
+                                           r"Outlook.Application\CLSID"))
+            return True
+        except OSError:
+            return False
+    except Exception:
+        return None   # unknown
+
+
+def explain_outlook_failure(exc):
+    """Turn a classic-Outlook connection error into advice anyone can follow."""
+    procs = running_processes()
+    classic_running = "outlook.exe" in procs
+    new_running = "olk.exe" in procs
+    installed = classic_outlook_installed()
+    code = None
+    try:
+        code = exc.args[0] if isinstance(exc.args[0], int) else None
+    except Exception:
+        pass
+    if new_running and not classic_running:
+        msg = ("You're using the NEW Outlook, which doesn't let other programs connect "
+               "to it.\n\nEither switch Outlook back to classic (turn off the 'New "
+               "Outlook' switch in its top-right corner), or go to Settings > Connection "
+               "and choose 'Microsoft account', which works with the new Outlook.")
+    elif installed is False:
+        msg = ("Classic Outlook isn't installed on this PC.\n\nGo to Settings > Connection "
+               "and choose 'Microsoft account' instead.")
+    elif not classic_running:
+        msg = ("Outlook isn't open.\n\nOpen Outlook, wait until your inbox has loaded, "
+               "then try again.")
+    elif code == -2146959355:            # CO_E_SERVER_EXEC_FAILURE
+        msg = ("Outlook and this app are running with different permissions (one was "
+               "started 'as administrator').\n\nClose Outlook completely, open it normally, "
+               "then start Email Assistant normally too.")
+    elif code in (-2147221005, -2147221164):
+        msg = ("Outlook is open, but Windows says it isn't registered for other programs "
+               "to use. Repairing Office usually fixes this: Settings > Apps > "
+               "Microsoft 365 / Office > Modify > Quick Repair.")
+    else:
+        msg = ("Outlook is open, but this app couldn't connect to it. Outlook may be "
+               "showing a pop-up waiting for an answer, or a company setting may be "
+               "blocking it.")
+    return (f"{msg}\n\n(Details: {type(exc).__name__}: {exc}; classic running: "
+            f"{'yes' if classic_running else 'no'}, new Outlook running: "
+            f"{'yes' if new_running else 'no'})")
+
+
+def _naive_local(dt):
+    return datetime(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
+
+
+def _smtp_of(entry):
+    try:
+        if entry.AddressEntryUserType in (0, 5):        # Exchange user
+            ex = entry.GetExchangeUser()
+            if ex:
+                return ex.PrimarySmtpAddress.lower()
+    except Exception:
+        pass
+    try:
+        return (entry.Address or "").lower()
+    except Exception:
+        return ""
+
+
+class ClassicOutlook:
+    """Same interface as Graph, backed by the Outlook desktop app on this PC.
+    Use from a thread that has called com_thread_start()."""
+
+    def __init__(self, settings):
+        self.settings = settings
+        if pythoncom is None:
+            raise GraphError("Classic Outlook needs an add-on that isn't installed "
+                             "(pywin32). Double-click Setup.bat, then try again.")
+        errors = []
+        for make in (lambda: win32com.client.Dispatch("Outlook.Application"),
+                     lambda: win32com.client.dynamic.Dispatch("Outlook.Application")):
+            try:
+                self.ns = make().GetNamespace("MAPI")
+                self.inbox = self.ns.GetDefaultFolder(OL_INBOX)
+                return
+            except Exception as e:
+                errors.append(e)
+        raise OutlookConnectError(explain_outlook_failure(errors[0]))
+
+    def _sender(self, item):
+        try:
+            if item.SenderEmailType == "EX":
+                return _smtp_of(item.Sender)
+            return (item.SenderEmailAddress or "").lower()
+        except Exception:
+            return ""
+
+    def _as_message(self, item):
+        """Convert an Outlook item to the same shape Graph returns."""
+        local = _naive_local(item.ReceivedTime)
+        to = []
+        try:
+            for i in range(1, item.Recipients.Count + 1):
+                r = item.Recipients.Item(i)
+                if r.Type == OL_TO:
+                    to.append({"emailAddress": {"address": _smtp_of(r.AddressEntry)}})
+        except Exception:
+            pass
+        headers = []
+        try:
+            raw = item.PropertyAccessor.GetProperty(PR_HEADERS) or ""
+            for line in raw.splitlines():
+                if ":" in line and not line[:1].isspace():
+                    k, v = line.split(":", 1)
+                    headers.append({"name": k.strip(), "value": v.strip()})
+        except Exception:
+            pass
+        body = item.Body or ""
+        return {"id": item.EntryID, "subject": item.Subject or "",
+                "from": {"emailAddress": {"name": item.SenderName or "",
+                                          "address": self._sender(item)}},
+                "toRecipients": to,
+                "receivedDateTime": local.astimezone(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"),
+                "isRead": not item.UnRead, "webLink": "",
+                "importance": OL_IMPORTANCE.get(getattr(item, "Importance", 1), "normal"),
+                "bodyPreview": " ".join(body.split())[:255],
+                "body": {"contentType": "text", "content": body},
+                "internetMessageHeaders": headers}
+
+    def me(self):
+        try:
+            entry = self.ns.CurrentUser.AddressEntry
+            name = self.ns.CurrentUser.Name or ""
+            addr = _smtp_of(entry)
+            return name, ({addr} if addr else set())
+        except Exception:
+            return "", set()
+
+    def inbox_counts(self):
+        return self.inbox.Items.Count, self.inbox.UnReadItemCount
+
+    def newest_message(self):
+        items = self.inbox.Items
+        items.Sort("[ReceivedTime]", True)
+        first = items.GetFirst()
+        return self._as_message(first) if first is not None else None
+
+    def messages_since(self, cutoff_local, unread_only):
+        items = (self.inbox.Items.Restrict("[UnRead] = True") if unread_only
+                 else self.inbox.Items)
+        items.Sort("[ReceivedTime]", True)
+        for item in items:
+            try:
+                if item.Class != OL_MAIL:
+                    continue
+                if _naive_local(item.ReceivedTime) < cutoff_local:
+                    break
+                yield self._as_message(item)
+            except Exception:
+                continue
+
+    def message_body(self, msg_id):
+        return self.ns.GetItemFromID(msg_id).Body or ""
+
+    def send_test_mail(self, to_addr, subject, body, importance="normal"):
+        mail = self.ns.Application.CreateItem(0)
+        mail.To = to_addr
+        mail.Subject = f"{TEST_TAG} {subject}"
+        mail.Body = body
+        mail.Importance = {"low": 0, "normal": 1, "high": 2}.get(importance, 1)
+        mail.DeleteAfterSubmit = True       # don't clutter Sent Items
+        mail.Send()
+
+    def create_reply_draft(self, msg_id, text):
+        reply = self.ns.GetItemFromID(msg_id).Reply()
+        reply.HTMLBody = insert_into_html(reply.HTMLBody or "", text)
+        reply.Save()
+        return reply.EntryID
+
+    def send_draft(self, draft_id):
+        self.ns.GetItemFromID(draft_id).Send()
+
+    def show(self, item_id):
+        self.ns.GetItemFromID(item_id).Display(False)
+
+    def mark_replied(self, msg_id, mark_read):
+        try:
+            item = self.ns.GetItemFromID(msg_id)
+            if mark_read:
+                item.UnRead = False
+            cats = item.Categories or ""
+            if "AI Replied" not in cats:
+                item.Categories = (cats + ", " if cats else "") + "AI Replied"
+            item.Save()
+        except Exception:
+            pass
+
+
+def com_thread_start():
+    if pythoncom is not None:
+        try:
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
+
+
+def com_thread_end():
+    if pythoncom is not None:
+        try:
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
+
+
+def uses_classic(settings):
+    return settings.get("connection") == "classic"
+
+
+def mailbox(settings):
+    """The mail connection the user picked in Settings."""
+    return ClassicOutlook(settings) if uses_classic(settings) else Graph(settings)
+
+
+def make_draft(settings, msg_id, text):
+    """Save a reply in Drafts; with classic Outlook, also open it on screen."""
+    mb = mailbox(settings)
+    draft_id = mb.create_reply_draft(msg_id, text)
+    if uses_classic(settings):
+        mb.show(draft_id)
+    return draft_id
+
+
 def headers_say_automated(msg):
     for h in msg.get("internetMessageHeaders") or []:
         name = (h.get("name") or "").lower()
@@ -660,13 +930,15 @@ def email_text(name, addr, subject, body, importance="normal"):
 # Background workers
 # ---------------------------------------------------------------------------
 def check_worker(settings, processed, out):
+    com_thread_start()
     try:
         problem = ollama_problem(settings["model"])
         if problem:
             out.put(("error", problem))
             return
-        g = Graph(settings)
-        out.put(("progress", "Connecting to your mailbox..."))
+        g = mailbox(settings)
+        out.put(("progress", "Connecting to Outlook..." if uses_classic(settings)
+                 else "Connecting to your mailbox..."))
         _, me = g.me()
         ignored = ignored_list(settings)
         cutoff = range_cutoff(settings.get("check_range"))
@@ -741,14 +1013,17 @@ def check_worker(settings, processed, out):
         out.put(("need_signin", e))
     except Exception as e:
         out.put(("error", friendly_error(e)))
+    finally:
+        com_thread_end()
 
 
 def connection_test(settings):
-    g = Graph(settings)
+    g = mailbox(settings)
     name, addrs = g.me()
     total, unread = g.inbox_counts()
     newest = g.newest_message()
-    lines = [f"Connected to Microsoft!\n",
+    lines = [("Connected to classic Outlook on this PC!\n" if uses_classic(settings)
+              else "Connected to Microsoft!\n"),
              f"Account: {name} ({', '.join(sorted(addrs)) or 'no address'})",
              f"Inbox: {total} emails, {unread} unread"]
     if newest:
@@ -759,12 +1034,13 @@ def connection_test(settings):
 
 
 def write_worker(settings, entry, instructions, out):
+    com_thread_start()
     try:
         problem = ollama_problem(settings["model"])
         if problem:
             out.put(("write_done", entry["id"], None, problem))
             return
-        body = Graph(settings).message_body(entry["id"])
+        body = mailbox(settings).message_body(entry["id"])
         user = email_text(entry["from"], entry["address"], entry["subject"], body)
         if entry.get("reply"):
             user += f"\n\n--- Current draft reply ---\n{entry['reply']}"
@@ -778,6 +1054,8 @@ def write_worker(settings, entry, instructions, out):
     except Exception as e:
         out.put(("write_done", entry["id"], None,
                  "Couldn't write a reply.\n\n" + friendly_error(e)))
+    finally:
+        com_thread_end()
 
 
 # ---------------------------------------------------------------------------
@@ -1160,7 +1438,7 @@ class EmailAssistant:
             self.tabs.select(self.set_area)
             self.set_status("Welcome! Fill in your name and preferences, connect your "
                             "Microsoft account, then click Save settings.")
-        elif not signed_in_user(self.settings):
+        elif not uses_classic(self.settings) and not signed_in_user(self.settings):
             self.set_status("Sign in to your Microsoft account under Settings to get started.")
         if self.settings.get("check_updates_on_start", True):
             self.root.after(3000, lambda: self.check_for_updates(manual=False))
@@ -1172,10 +1450,13 @@ class EmailAssistant:
     def run_bg(self, fn, done):
         """Run fn() off the main thread; call done(result, error) on the main thread."""
         def work():
+            com_thread_start()
             try:
                 self.events.put(("bg", done, fn(), None))
             except Exception as e:
                 self.events.put(("bg", done, None, e))
+            finally:
+                com_thread_end()
         threading.Thread(target=work, daemon=True).start()
 
     def save_soon(self):
@@ -1229,7 +1510,29 @@ class EmailAssistant:
         messagebox.showwarning(title, friendly_error(err))
 
     # ----- account -----
+    def show_connection_fields(self):
+        try:
+            if self.conn_var.get() == "microsoft":
+                self.ms_frame.pack(fill="x", before=self.conn_tail)
+            else:
+                self.ms_frame.pack_forget()
+        except (AttributeError, tk.TclError):
+            pass
+
+    def on_connection_change(self):
+        self.show_connection_fields()
+        self.save_settings(quiet=True)
+        if uses_classic(self.settings):
+            self.set_status("Using classic Outlook on this PC. Keep Outlook open while "
+                            "you use Email Assistant.")
+        elif not signed_in_user(self.settings):
+            self.set_status("Using your Microsoft account. Enter the codes from IT and "
+                            "click Sign in.")
+
     def refresh_account(self):
+        if uses_classic(self.settings):
+            self.account_label.configure(text="Classic Outlook on this PC")
+            return
         user = signed_in_user(self.settings)
         self.account_label.configure(text=f"Signed in as {user}" if user else "Not signed in")
         try:
@@ -1531,10 +1834,12 @@ class EmailAssistant:
                 tk.Label(wrap, text=note, font=FONT_S, bg=BG, fg=MUTED, anchor="w",
                          justify="left", wraplength=820).pack(fill="x", pady=(0, 4))
 
-        def entry(key, label, width=40):
-            row = tk.Frame(wrap, bg=BG)
+        def entry(key, label, width=40, parent=None):
+            parent = parent or wrap
+            pbg = parent.cget("bg")
+            row = tk.Frame(parent, bg=pbg)
             row.pack(fill="x", pady=3)
-            tk.Label(row, text=label, font=FONT, bg=BG, fg=TEXT, anchor="w", width=40
+            tk.Label(row, text=label, font=FONT, bg=pbg, fg=TEXT, anchor="w", width=40
                      ).pack(side="left", padx=(0, 6))
             v = tk.StringVar(value=str(s[key]))
             tk.Entry(row, textvariable=v, font=FONT, width=width, relief="solid", bd=1
@@ -1558,22 +1863,52 @@ class EmailAssistant:
         entry("my_name", "Your name")
         entry("my_role", "Your job title")
 
-        section("Microsoft account",
-                "Email Assistant reads and sends your work email through Microsoft. "
-                "Your IT department gives you the two codes below (or leave the Directory "
-                "ID empty if they say so). Then click Sign in.")
+        section("Connection", "How Email Assistant reaches your email.")
+        conn = tk.Frame(wrap, bg=CARD, padx=14, pady=10, highlightthickness=1,
+                        highlightbackground=BORDER)
+        conn.pack(fill="x")
+        self.conn_var = tk.StringVar(value="classic" if uses_classic(s) else "microsoft")
+        self.fields["connection"] = self.conn_var
+        for value, title, desc in (
+                ("microsoft", "Microsoft account (recommended)",
+                 "Works with the new Outlook, classic Outlook, Outlook on the web and Mac. "
+                 "Needs a one-time approval from IT and a sign-in."),
+                ("classic", "Classic Outlook on this PC",
+                 "Uses the classic Outlook desktop app on this Windows PC. No IT approval "
+                 "or sign-in needed, but Outlook must be open, and it doesn't work with "
+                 "the new Outlook.")):
+            tk.Radiobutton(conn, text=title, variable=self.conn_var, value=value,
+                           command=self.on_connection_change, font=FONT_B, bg=CARD,
+                           activebackground=CARD, anchor="w").pack(fill="x")
+            tk.Label(conn, text=desc, font=FONT_S, bg=CARD, fg=MUTED, anchor="w",
+                     justify="left", wraplength=780).pack(fill="x", padx=(24, 0),
+                                                          pady=(0, 6))
+
+        # Microsoft sign-in details (only shown for the Microsoft account option)
+        self.ms_frame = tk.Frame(conn, bg=CARD)
+        tk.Frame(self.ms_frame, bg=BORDER, height=1).pack(fill="x", pady=(2, 8))
+        tk.Label(self.ms_frame, text="Your IT department gives you these two codes (leave "
+                                     "the Directory ID empty if they say so). Then click "
+                                     "Sign in.", font=FONT_S, bg=CARD, fg=MUTED,
+                 anchor="w", justify="left", wraplength=780).pack(fill="x", pady=(0, 4))
         if not DEFAULT_CLIENT_ID:
-            entry("client_id", "App (client) ID", 42)
-        entry("tenant_id", "Directory (tenant) ID", 42)
-        row_a = tk.Frame(wrap, bg=BG)
+            entry("client_id", "App (client) ID", 42, parent=self.ms_frame)
+        entry("tenant_id", "Directory (tenant) ID", 42, parent=self.ms_frame)
+        row_a = tk.Frame(self.ms_frame, bg=CARD)
         row_a.pack(fill="x", pady=(6, 0))
         self.signin_btn = button(row_a, "Sign in", self.sign_in, "primary")
         self.signin_btn.pack(side="left")
         button(row_a, "Sign out", self.do_sign_out).pack(side="left", padx=8)
-        self.test_btn = button(row_a, "Test connection", self.test_connection)
+        self.signin_status = tk.Label(row_a, text="", font=FONT_B, bg=CARD)
+        self.signin_status.pack(side="left", padx=4)
+
+        self.conn_tail = tk.Frame(conn, bg=CARD)
+        self.conn_tail.pack(fill="x", pady=(8, 0))
+        self.test_btn = button(self.conn_tail, "Test connection", self.test_connection)
         self.test_btn.pack(side="left")
-        self.signin_status = tk.Label(row_a, text="", font=FONT_B, bg=BG)
-        self.signin_status.pack(side="left", padx=12)
+        tk.Label(self.conn_tail, text="Only reads your inbox. Nothing is changed or sent.",
+                 font=FONT_S, bg=CARD, fg=MUTED).pack(side="left", padx=10)
+        self.show_connection_fields()
 
         section("Reply template",
                 "Every suggested reply is wrapped in your greeting and sign-off. "
@@ -1645,8 +1980,10 @@ class EmailAssistant:
         check("confirm_each_send", "Show a final 'are you sure?' before sending each reply")
         check("mark_read_after_send", "Mark the original email as read after I reply")
 
-        section("Updates", f"You're using version {current_version()}.")
-        check("check_updates_on_start", "Check for updates each time the app starts")
+        section("Updates", f"You're using version {current_version()}. Updates are only "
+                           "installed after you review and accept them.")
+        check("check_updates_on_start",
+              "Let me know when an update is available (nothing installs unless I accept)")
         row_u = tk.Frame(wrap, bg=BG)
         row_u.pack(fill="x", pady=(6, 0))
         self.update_check_btn = button(row_u, "Check for updates now",
@@ -1746,11 +2083,17 @@ class EmailAssistant:
 
     def _auto_tick(self):
         self._auto_job = None
-        if not self.checking and signed_in_user(self.settings):
+        if not self.checking and (uses_classic(self.settings)
+                                  or signed_in_user(self.settings)):
             self.start_check()
         self.schedule_auto()
 
     def open_original(self, e):
+        if uses_classic(self.settings):
+            settings = dict(self.settings)
+            self.run_bg(lambda: mailbox(settings).show(e["id"]),
+                        lambda r, err: err and self.show_error(err, "Couldn't open email"))
+            return
         url = e.get("web_link")
         if not url:
             messagebox.showinfo("Email Assistant", "Open Outlook to see this email.")
@@ -1774,7 +2117,7 @@ class EmailAssistant:
         settings = dict(self.settings)
 
         def work():
-            g = Graph(settings)
+            g = mailbox(settings)
             g.send_draft(g.create_reply_draft(e["id"], full))
             g.mark_replied(e["id"], settings["mark_read_after_send"])
 
@@ -1806,7 +2149,7 @@ class EmailAssistant:
         self.set_status(f"Sending {len(jobs)} replies...")
 
         def work():
-            g = Graph(settings)
+            g = mailbox(settings)
             sent, failed = [], []
             for mid, full in jobs:
                 try:
@@ -1851,10 +2194,12 @@ class EmailAssistant:
                 self.render()
                 self.show_error(err, "Couldn't save draft")
                 return
-            self.set_status(f"Saved the reply to {e['from']} in your Outlook Drafts folder. "
+            self.set_status(f"Opened your reply to {e['from']} in Outlook (also saved in "
+                            "Drafts). Finish and send it there." if uses_classic(settings) else
+                            f"Saved the reply to {e['from']} in your Outlook Drafts folder. "
                             "Open Outlook to finish and send it.")
             self.remove(e["id"], "drafted")
-        self.run_bg(lambda: Graph(settings).create_reply_draft(e["id"], full), done)
+        self.run_bg(lambda: make_draft(settings, e["id"], full), done)
 
     def reply_myself(self, e):
         settings = dict(self.settings)
@@ -1864,9 +2209,11 @@ class EmailAssistant:
             if err:
                 self.show_error(err, "Couldn't start a reply")
                 return
-            self.set_status(f"A reply to {e['from']} is waiting in your Outlook Drafts "
+            self.set_status(f"Opened a reply to {e['from']} in Outlook, with your greeting "
+                            "and sign-off already in it." if uses_classic(settings) else
+                            f"A reply to {e['from']} is waiting in your Outlook Drafts "
                             "folder, with your greeting and sign-off already in it.")
-        self.run_bg(lambda: Graph(settings).create_reply_draft(e["id"], text), done)
+        self.run_bg(lambda: make_draft(settings, e["id"], text), done)
 
     def dialog(self, title, width=640, height=560):
         win = tk.Toplevel(self.root)
@@ -1918,7 +2265,7 @@ class EmailAssistant:
                        (e.get("preview") or "") + "\n\n(Couldn't load the full email: "
                        + friendly_error(err) + ")")
             txt.configure(state="disabled")
-        self.run_bg(lambda: Graph(settings).message_body(e["id"]).strip(), done)
+        self.run_bg(lambda: mailbox(settings).message_body(e["id"]).strip(), done)
 
     def open_test_dialog(self):
         win = self.dialog("Send test emails to yourself", 640, 640)
@@ -1985,7 +2332,7 @@ class EmailAssistant:
             send_btn.configure(state="disabled", text="Sending...")
 
             def work():
-                g = Graph(settings)
+                g = mailbox(settings)
                 _, addrs = g.me()
                 if not addrs:
                     raise GraphError("Couldn't find your email address.")
@@ -2067,8 +2414,11 @@ class EmailAssistant:
                 f"A new version of Email Assistant is available.\n\n"
                 f"Your version: {current_version()}\nNew version: {info['version']}\n\n"
                 f"What's new:\n{notes}\n\n"
-                "Install it now? The app will restart afterwards. Your settings and "
-                "suggested replies are kept."):
+                "Install it now? It will download the new version from GitHub, keep a "
+                "backup of the current one, install any add-ons it needs, and restart. "
+                "Your settings, sign-in and suggested replies are kept.\n\n"
+                "Choose No to keep using this version. You can update any time from "
+                "the orange button or Settings."):
             return
         if self.checking or self.busy_ids:
             messagebox.showinfo("Email Assistant", "Please wait until the current check or "
@@ -2104,7 +2454,13 @@ class EmailAssistant:
             self.update_btn.configure(text=f"Update available ({info['version']})",
                                       state="normal")
             self.update_btn.pack(side="right", padx=(0, 10))
-            self.offer_update()
+            if manual:
+                self.offer_update()
+            else:
+                # Never interrupt at startup; the update waits until the user opens it
+                self.set_status(f"Version {info['version']} is available. Click the orange "
+                                "'Update available' button when you'd like to review it. "
+                                "Nothing is installed unless you accept.")
         elif kind == "update_none" and ev[1]:
             messagebox.showinfo("Email Assistant",
                                 f"You're up to date (version {current_version()}).")
