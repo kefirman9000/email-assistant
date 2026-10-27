@@ -1,4 +1,4 @@
 {
-  "version": "1.1.0",
-  "notes": "You can now choose which emails to look at: the past 30 minutes, past hour, today, past week and more. You can also include emails you've already read."
+  "version": "1.1.1",
+  "notes": "Clearer messages when the app can't connect to Outlook, explaining what to do. New 'Test Outlook connection' button in Settings."
 }
