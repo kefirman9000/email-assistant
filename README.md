@@ -45,10 +45,6 @@ Tip: right-click *Start Email Assistant* → *Send to* → *Desktop (create shor
    - **Move to 'needs attention'** or **Don't reply**
 4. **Needs your attention** lists emails the assistant couldn't safely answer. Click **Have AI draft a reply** and tell it what to say, or **Start a reply in Outlook Drafts**.
 
-### Trying it out safely
-
-On the **Inbox** tab, click **Send test emails**. Pick from ready-made samples (a thank-you, a meeting request, urgent and low-priority messages, and more) or write your own with an urgency level. They arrive in your own inbox marked "[Email Assistant test]", and any replies only go to you.
-
 ## Updates
 
 **Updates are only installed when you accept them.** When the app starts, it quietly checks for a new version. If there is one, an orange **Update available** button appears at the top. Nothing else happens until you click it, read what's new, and choose **Yes**. Only then does it download the update, keep a backup of the old version in the `backup` folder, install, and restart. Your settings, sign-in and pending replies are kept. You can also check any time from **Settings → Check for updates now**, or turn off the startup check there.

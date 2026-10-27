@@ -1,4 +1,4 @@
 {
-  "version": "2.1.2",
-  "notes": "Classic Outlook: tries more ways to create emails when Outlook refuses, and explains the most likely reason if it still can't (Office not activated/licensed, which blocks new emails)."
+  "version": "2.1.3",
+  "notes": "Removed the 'Send test emails' feature, because those emails could be flagged as spam."
 }
