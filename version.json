@@ -1,4 +1,4 @@
 {
-  "version": "2.1.3",
-  "notes": "Removed the 'Send test emails' feature, because those emails could be flagged as spam."
+  "version": "2.2.0",
+  "notes": "New reply picker! 'Rewrite with AI' now shows two different replies side by side. Click a vibe (Happier, More frank, Friendly acceptance, Friendly denial, More formal, Shorter, Apologetic and more) to get two new options in that style, or describe what you want. Edit either one and click 'Use this reply'."
 }
