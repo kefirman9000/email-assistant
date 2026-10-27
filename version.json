@@ -1,4 +1,4 @@
 {
-  "version": "2.0.0",
-  "notes": "Big update! Email Assistant now works with the NEW Outlook (and Outlook on the web). It connects through Microsoft's official mail service, so you'll need to sign in once under Settings > Microsoft account using two codes from your IT department.\n\nAlso new: an Inbox start screen that shows every email (even ones the assistant skipped), a built-in email viewer, urgency labels, 'Send test emails' to try things out safely, and a simpler greeting/sign-off editor with a live preview."
+  "version": "2.1.0",
+  "notes": "You can now choose how Email Assistant reaches your email under Settings > Connection: your Microsoft account (works with the new Outlook) or classic Outlook on this PC (no IT approval or sign-in needed).\n\nUpdates are now even more hands-off: the app just shows an orange 'Update available' button and never interrupts you. Nothing installs unless you click it and accept."
 }
