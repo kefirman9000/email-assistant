@@ -1,4 +1,4 @@
 {
-  "version": "2.4.0",
-  "notes": "New: Quick replies. Saved one-click replies like 'Thanks, got it!', with a switch for whether to add your greeting and sign-off. You can also turn the greeting and sign-off off for any single reply.\n\nNew: Notifications. A Windows notification when a check finds emails that need you, even while the app is minimized.\n\nNew: Sending pace. Replies go out one at a time with a natural pause between them, never instantly after an email arrives, and up to an hourly limit, so nothing looks automated. You can cancel a reply while it's waiting.\n\nAlso: proper checkmarks in checkboxes."
+  "version": "2.4.1",
+  "notes": "Dark mode is now a simple on/off switch at the top of the window, with a Check for updates button right next to it."
 }

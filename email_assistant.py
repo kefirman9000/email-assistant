@@ -41,7 +41,7 @@ try:
 except ImportError:
     pythoncom = None
 
-APP_VERSION = "2.4.0"                         # bump this for every release
+APP_VERSION = "2.4.1"                         # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 # Microsoft sign-in. IT gives you these two values (see README, "IT setup").
@@ -1813,6 +1813,44 @@ class RoundButton(tk.Canvas):
         return tk.Canvas.cget(self, key)
 
 
+class ToggleSwitch(tk.Canvas):
+    """An on/off switch with a sliding knob."""
+
+    def __init__(self, parent, on, command):
+        self.w, self.h = px(42), px(24)
+        super().__init__(parent, width=self.w, height=self.h, bg=parent.cget("bg"),
+                         highlightthickness=0, bd=0, cursor="hand2", takefocus=0)
+        self.on, self.command = bool(on), command
+        self.pos = 1.0 if self.on else 0.0
+        self.bind("<ButtonRelease-1>", lambda e: self.toggle())
+        self._draw()
+
+    def _draw(self):
+        self.delete("all")
+        track = BTN_PRIMARY if self.pos >= 0.5 else FIELD_BORDER
+        _round_rect(self, 1, 1, self.w - 1, self.h - 1, self.h // 2, fill=track,
+                    outline=track)
+        pad = px(3)
+        d = self.h - 2 * pad
+        x = pad + self.pos * (self.w - 2 * pad - d)
+        self.create_oval(x, pad, x + d, pad + d, fill="#ffffff", outline="#ffffff")
+
+    def toggle(self):
+        self.on = not self.on
+        target = 1.0 if self.on else 0.0
+
+        def step():
+            self.pos += (0.25 if target > self.pos else -0.25)
+            if abs(self.pos - target) < 0.26:
+                self.pos = target
+            self._draw()
+            if self.pos != target:
+                self.after(15, step)
+            elif self.command:
+                self.after(60, lambda: self.command(self.on))
+        step()
+
+
 def button(parent, text, cmd, kind="normal", small=False):
     return RoundButton(parent, text, cmd, kind, small)
 
@@ -1989,10 +2027,21 @@ class EmailAssistant:
         self.account_label = tk.Label(top, text="", font=FONT_S, bg=ACCENT_SOFT, fg=ACCENT,
                                       padx=px(12), pady=px(5))
         self.account_label.pack(side="right")
-        button(top, "Light mode" if DARK_MODE else "Dark mode",
-               lambda: self.switch_theme("light" if DARK_MODE else "dark"), "ghost", small=True
-               ).pack(side="right", padx=(0, px(10)))
-        self.update_btn = RoundButton(top, "", self.offer_update, "warning")
+        tk.Frame(top, bg=BORDER, width=1, height=px(26)).pack(side="right", padx=px(14))
+        theme_box = tk.Frame(top, bg=CARD)
+        theme_box.pack(side="right")
+        sw = ToggleSwitch(theme_box, DARK_MODE,
+                          lambda on: self.switch_theme("dark" if on else "light"))
+        sw.pack(side="right")
+        dl = tk.Label(theme_box, text="Dark mode", font=FONT_S, bg=CARD, fg=MUTED,
+                      cursor="hand2")
+        dl.pack(side="right", padx=(0, px(8)))
+        dl.bind("<Button-1>", lambda e: sw.toggle())
+        self.update_bar_btn = button(top, "Check for updates",
+                                     lambda: self.check_for_updates(manual=True), "normal",
+                                     small=True)
+        self.update_bar_btn.pack(side="right", padx=(0, px(16)))
+        self.update_btn = RoundButton(top, "", self.offer_update, "warning", small=True)
         self.update_info = None
         self.updating = False
         tk.Frame(root, bg=BORDER, height=1).pack(fill="x")
@@ -3394,7 +3443,11 @@ class EmailAssistant:
         if self.updating:
             return
         if manual:
-            self.update_check_btn.configure(state="disabled", text="Checking...")
+            for b in (getattr(self, "update_check_btn", None), self.update_bar_btn):
+                try:
+                    b.configure(state="disabled", text="Checking...")
+                except (AttributeError, tk.TclError):
+                    pass
         threading.Thread(target=update_check_worker, args=(self.events, manual),
                          daemon=True).start()
 
@@ -3442,14 +3495,16 @@ class EmailAssistant:
         if kind in ("update_none", "update_check_failed", "update_found"):
             try:
                 self.update_check_btn.configure(state="normal", text="Check for updates now")
-            except tk.TclError:
+            except (AttributeError, tk.TclError):
                 pass
+            self.update_bar_btn.configure(state="normal", text="Check for updates")
         if kind == "update_found":
             _, info, manual = ev
             self.update_info = info
             self.update_btn.configure(text=f"Update available ({info['version']})",
                                       state="normal")
-            self.update_btn.pack(side="right", padx=(0, 10))
+            self.update_bar_btn.pack_forget()          # the orange button takes its place
+            self.update_btn.pack(side="right", padx=(0, px(16)))
             if manual:
                 self.offer_update()
             else:
