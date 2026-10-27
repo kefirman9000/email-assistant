@@ -40,7 +40,7 @@ try:
 except ImportError:
     pythoncom = None
 
-APP_VERSION = "2.1.0"                         # bump this for every release
+APP_VERSION = "2.1.1"                         # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 # Microsoft sign-in. IT gives you these two values (see README, "IT setup").
@@ -632,6 +632,41 @@ def explain_outlook_failure(exc):
             f"{'yes' if new_running else 'no'})")
 
 
+def _com_codes(exc):
+    """(hresult, inner scode, Outlook's own message) from a COM error, if present."""
+    try:
+        hr = exc.args[0] if isinstance(exc.args[0], int) else None
+        info = exc.args[2] if len(exc.args) > 2 and exc.args[2] else None
+        inner = info[5] if info and len(info) > 5 else None
+        text = info[2] if info and len(info) > 2 else ""
+        return hr, inner, text or ""
+    except Exception:
+        return None, None, ""
+
+
+def outlook_send_failure(exc, step, first_step=None):
+    """Explain why classic Outlook wouldn't send, in plain English."""
+    _, inner, text = _com_codes(exc)
+    if step == "addressing it to you" or "match your own address" in str(exc):
+        hint = ("Outlook couldn't find your own email address in its address book. "
+                "Try 'Test connection' in Settings to see which address Outlook reports.")
+    elif inner == -2147467260 or "abort" in text.lower():   # E_ABORT
+        hint = ("Outlook blocked it. If you saw a warning like 'A program is trying to "
+                "send an email on your behalf', click Allow and try again.")
+    elif step == "sending it":
+        hint = ("Outlook wouldn't send it. Common causes:\n"
+                "  - A security warning from Outlook is waiting (it may be hidden behind "
+                "other windows). Click Allow.\n"
+                "  - Outlook is set to 'Work Offline' (Send/Receive tab).\n"
+                "  - Your company blocks programs from sending email through Outlook. "
+                "In that case, use Settings > Connection > Microsoft account instead.")
+    else:
+        hint = "Outlook refused the request."
+    tried = f" (first attempt failed while {first_step})" if first_step else ""
+    return (f"Outlook couldn't send the email. It failed while {step}{tried}.\n\n{hint}"
+            f"\n\n(Details: {text or exc})")
+
+
 def _naive_local(dt):
     return datetime(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
 
@@ -746,14 +781,60 @@ class ClassicOutlook:
     def message_body(self, msg_id):
         return self.ns.GetItemFromID(msg_id).Body or ""
 
+    def _address_to_me(self, mail, to_addr):
+        """Add yourself as the recipient. Tries your email address first, then your
+        name as Outlook knows it (works when the address is an internal Exchange one)."""
+        tried = []
+        candidates = [to_addr]
+        try:
+            candidates.append(self.ns.CurrentUser.Name)
+        except Exception:
+            pass
+        for cand in candidates:
+            if not cand or cand in tried:
+                continue
+            tried.append(cand)
+            try:
+                rec = mail.Recipients.Add(cand)
+                if rec.Resolve():
+                    return
+                rec.Delete()
+            except Exception:
+                continue
+        raise RuntimeError("Outlook couldn't match your own address "
+                           f"(tried: {', '.join(tried) or 'nothing'})")
+
+    def _send_one_test(self, to_addr, subject, body, importance, keep_copy):
+        step = "creating the email"
+        try:
+            mail = self.ns.Application.CreateItem(0)
+            step = "filling in the subject and text"
+            mail.Subject = f"{TEST_TAG} {subject}"
+            mail.Body = body
+            mail.Importance = {"low": 0, "normal": 1, "high": 2}.get(importance, 1)
+            step = "addressing it to you"
+            self._address_to_me(mail, to_addr)
+            if not keep_copy:
+                step = "turning off the Sent Items copy"
+                mail.DeleteAfterSubmit = True
+            step = "sending it"
+            mail.Send()
+        except Exception as e:
+            e.step = step
+            raise
+
     def send_test_mail(self, to_addr, subject, body, importance="normal"):
-        mail = self.ns.Application.CreateItem(0)
-        mail.To = to_addr
-        mail.Subject = f"{TEST_TAG} {subject}"
-        mail.Body = body
-        mail.Importance = {"low": 0, "normal": 1, "high": 2}.get(importance, 1)
-        mail.DeleteAfterSubmit = True       # don't clutter Sent Items
-        mail.Send()
+        # First try without a Sent Items copy; some Outlook setups refuse that,
+        # so if anything fails, try again normally with a fresh email.
+        try:
+            self._send_one_test(to_addr, subject, body, importance, keep_copy=False)
+            return
+        except Exception as first:
+            first_step = getattr(first, "step", "?")
+        try:
+            self._send_one_test(to_addr, subject, body, importance, keep_copy=True)
+        except Exception as e:
+            raise GraphError(outlook_send_failure(e, getattr(e, "step", "?"), first_step))
 
     def create_reply_draft(self, msg_id, text):
         reply = self.ns.GetItemFromID(msg_id).Reply()
@@ -762,7 +843,11 @@ class ClassicOutlook:
         return reply.EntryID
 
     def send_draft(self, draft_id):
-        self.ns.GetItemFromID(draft_id).Send()
+        try:
+            self.ns.GetItemFromID(draft_id).Send()
+        except Exception as e:
+            raise GraphError(outlook_send_failure(e, "sending it") +
+                             "\n\nYour reply is still saved in Outlook's Drafts folder.")
 
     def show(self, item_id):
         self.ns.GetItemFromID(item_id).Display(False)
@@ -2337,9 +2422,18 @@ class EmailAssistant:
                 if not addrs:
                     raise GraphError("Couldn't find your email address.")
                 to = sorted(addrs, key=lambda a: "@" not in a)[0]
+                sent, errors = 0, []
                 for m in mails:
-                    g.send_test_mail(to, m["subject"], m["body"], m["importance"])
-                return len(mails), to
+                    try:
+                        g.send_test_mail(to, m["subject"], m["body"], m["importance"])
+                        sent += 1
+                    except (SignInNeeded, SetupNeeded):
+                        raise
+                    except Exception as ex:
+                        errors.append(ex)
+                if not sent:
+                    raise errors[0]
+                return sent, to, errors
 
             def done(res, err):
                 if win.winfo_exists():
@@ -2347,13 +2441,17 @@ class EmailAssistant:
                 if err:
                     self.show_error(err, "Test emails")
                     return
-                n, to = res
+                n, to, errors = res
                 if win.winfo_exists():
                     win.destroy()
                 self.range_var.set("Past 30 minutes")
                 self.remember_check_options()
                 self.set_status(f"Sent {n} test email{'s' if n != 1 else ''} to {to}. "
                                 "Give them a minute to arrive, then click 'Check emails'.")
+                if errors:
+                    messagebox.showwarning(
+                        "Test emails", f"{len(errors)} of {n + len(errors)} test emails "
+                                       f"couldn't be sent.\n\n{friendly_error(errors[0])}")
             self.run_bg(work, done)
 
         send_btn = button(btns, "Send to myself", send, "primary")
