@@ -1,103 +1,119 @@
 # Email Assistant
 
-A simple app that reads your work email, suggests replies to the easy ones using an AI that runs entirely on your own computer, and lets you review, edit and approve each reply before it's sent.
+**Suggested replies to your work email, written by an AI on your own PC and sent only when you approve them.**
 
-It can connect two ways (choose under **Settings → Connection**):
+Email Assistant checks your inbox, drafts replies to the easy emails, flags the ones that need a real answer from you, and lets you review, edit and send each reply in a couple of clicks. The AI runs locally, so your email is never sent to an AI company.
 
-| | **Microsoft account** (recommended) | **Classic Outlook on this PC** |
-|---|---|---|
-| Works with | New Outlook, classic Outlook, Outlook on the web, Mac | Classic Outlook desktop app on Windows only |
-| Setup | One-time IT approval, then sign in | Nothing extra, just have classic Outlook open |
-| Outlook must be open | No | Yes |
-
-**Nothing is ever sent without you clicking "Approve & send".**
-
-## Screenshots
-
-**Inbox**: every email from your checks, with its urgency and what the assistant decided.
+**[⬇ Download Email Assistant](https://github.com/kefirman9000/email-assistant/archive/refs/heads/stable.zip)** · Windows 10 or 11 · Free
 
 ![Inbox](docs/screenshots/inbox.png)
 
-**Reply picker**: two AI replies side by side. Pick a vibe like *Friendly denial* to get two new options in that style.
+## Features
+
+- **Suggested replies** to simple emails (thank-yous, meeting confirmations, quick yes/no questions), ready to edit and send
+- **Reply picker** with two AI options side by side, plus one-click vibes: *Happier, More frank, Friendly acceptance, Friendly denial, More formal, Shorter* and more
+- **Quick replies** for one-click answers like "Thanks, got it!", no AI needed
+- **Your greeting and sign-off** added automatically, with an on/off switch for any reply
+- **Inbox view** of every email, with urgency labels and a built-in email viewer
+- **Auto-refresh** every 5 to 60 minutes, with **Windows notifications** when emails need you
+- **Natural sending pace**: replies go out one at a time with a short random pause, so nothing looks automated
+- **Dark mode**, and updates that only install when you say yes
+
+**Nothing is ever sent without you clicking Approve & send.**
 
 ![Reply picker](docs/screenshots/reply-picker.png)
 
-**Suggested replies**: edit, choose whether to include your greeting and sign-off, use a quick reply, then approve and send.
-
 ![Suggested replies](docs/screenshots/suggested-replies.png)
 
-## What you need
+## Getting started
 
-- A work Microsoft 365 email account. For the **Microsoft account** connection, IT approves the app once (see [IT setup](#it-setup)). For **Classic Outlook on this PC**, you just need the classic Outlook desktop app.
-- **Python** – <https://www.python.org/downloads/> (tick *"Add python.exe to PATH"* while installing)
-- **Ollama** – <https://ollama.com/download> (the AI runs locally; your email is never sent to an AI company)
+You'll need **[Python](https://www.python.org/downloads/)** (tick *Add python.exe to PATH* while installing) and **[Ollama](https://ollama.com/download)**, the free program that runs the AI on your PC.
 
-## First-time setup
+1. **[Download Email Assistant](https://github.com/kefirman9000/email-assistant/archive/refs/heads/stable.zip)** and unzip it somewhere like your Documents folder.
+2. Double-click **Setup.bat** and wait for *All done!* The first AI download can take a while.
+3. Double-click **Start Email Assistant**. Tip: right-click it → *Send to* → *Desktop (create shortcut)*.
+4. On the **Settings** tab, enter your name, choose your **Connection** (below), check your greeting and sign-off, and click **Save settings**. Then click **Test connection**.
 
-1. Download the app: <https://github.com/kefirman9000/email-assistant/archive/refs/heads/stable.zip>. Unzip it somewhere like your Documents folder.
-2. Double-click **Setup.bat** and wait for "All done!" (the AI download can take a while).
-3. Double-click **Start Email Assistant**.
-4. On the **Settings** tab:
-   - Fill in your name.
-   - Under **Connection**, pick how to reach your email:
-     - **Microsoft account**: enter the two codes from IT and click **Sign in**. A browser window opens; sign in with your work account.
-     - **Classic Outlook on this PC**: nothing else to do. Keep Outlook open.
-   - Check your greeting and sign-off under **Reply template**, then click **Save settings**.
-5. Click **Test connection** to make sure everything works.
+### Choosing a connection
 
-Tip: right-click *Start Email Assistant* → *Send to* → *Desktop (create shortcut)*.
+| | **Microsoft account** (recommended) | **Classic Outlook on this PC** |
+|---|---|---|
+| Works with | New Outlook, classic Outlook, Outlook on the web | Classic Outlook desktop app only |
+| Setup | Your IT department approves the app once, then you sign in | Nothing extra |
+| Outlook must be open | No | Yes |
 
-## Everyday use
+For **Microsoft account**, enter the two codes from IT under **Settings → Connection** and click **Sign in**. Send IT the [IT setup](#it-setup) steps below.
 
-1. Pick a time range under **Show emails from** (past 30 minutes, past hour, today, past week...). Tick **Include read emails** to look at read ones too. Then click **Check emails**. To check automatically, pick an interval under **Auto-refresh** (every 5, 10, 15 or 30 minutes, or every hour).
-2. The **Inbox** tab (the start screen) lists every email from your checks, with its urgency and what the assistant decided. You can **View** an email right in the app, **Open in Outlook**, or **Write a reply with AI**, even for emails the assistant skipped.
-3. On **Suggested replies**, for each email you can:
-   - Click in the white box to **edit the reply** (the grey greeting and sign-off are added automatically)
-   - **Approve & send** (you'll see the full reply one more time before it goes)
-   - **Rewrite with AI**: shows **two different replies** side by side. Click a vibe (*Happier, More frank, Friendly acceptance, Friendly denial, More formal, More casual, Shorter, Apologetic, Ask for details*) for two new options in that style, or describe what you want (e.g. "say yes but suggest 3pm"). Edit either one, then click **Use this reply**
-   - **Quick reply** to drop in a saved one-click reply (no AI), like "Thanks, got it!"
-   - Untick **Include greeting and sign-off** to send just the reply text
-   - **Save as draft** to finish it in Outlook
-   - **Needs attention** to move it to the other list, or **Don't reply**
-4. **Needs your attention** lists emails the assistant couldn't safely answer. Click **Draft a reply with AI** to choose between AI options the same way, or **Start my own reply**.
+## Using it
+
+1. Choose a time range under **Show emails from**, then click **Check emails**. Or set **Auto-refresh** to check on its own.
+2. **Inbox** shows every email and what the assistant decided. Click **View** to read one, or **Write a reply with AI** for any email, even skipped ones.
+3. **Suggested replies**: edit the text if you like, then **Approve & send**. Or try **Rewrite with AI**, a **Quick reply**, or **Save as draft** to finish in Outlook.
+4. **Needs your attention** holds emails the assistant couldn't safely answer. **Draft a reply with AI** lets you pick a vibe like *Friendly acceptance* or *Friendly denial*.
+
+Everything else, from notifications to sending pace and quick replies, is under **Settings**.
 
 ## Updates
 
-**Updates are only installed when you accept them.** When the app starts, it quietly checks for a new version. If there is one, an orange **Update available** button appears at the top. Nothing else happens until you click it, read what's new, and choose **Yes**. Only then does it download the update, keep a backup of the old version in the `backup` folder, install, and restart. Your settings, sign-in and pending replies are kept. You can also check any time with the **Check for updates** button at the top of the window, or turn off the startup check under **Settings → Updates**.
+When a new version is out, an orange **Update available** button appears at the top of the window. Click it to see what's new, then choose **Yes** to install. Nothing installs without your OK, and your settings and replies are kept. You can also click **Check for updates** at any time.
 
----
+## Troubleshooting
+
+<details>
+<summary><b>"The AI program (Ollama) isn't running"</b></summary>
+
+Open **Ollama** from the Start menu, wait a few seconds, then try again. If it says the AI model isn't downloaded, run **Setup.bat** again.
+</details>
+
+<details>
+<summary><b>"You're using the NEW Outlook" (Classic Outlook connection)</b></summary>
+
+The new Outlook doesn't let other programs connect to it. Switch to **Settings → Connection → Microsoft account** instead.
+</details>
+
+<details>
+<summary><b>"Outlook can read your mail but won't let programs create new emails"</b></summary>
+
+Your copy of Office probably isn't activated, so Outlook won't let anything create new emails, even by hand. Use the **Microsoft account** connection instead.
+</details>
+
+<details>
+<summary><b>Sign-in errors (Microsoft account)</b></summary>
+
+The message tells you what's wrong. Most often IT still needs to approve the app, or one of the two codes in **Settings → Connection** was copied incorrectly.
+</details>
+
+<details>
+<summary><b>No notifications appear</b></summary>
+
+Click **Send a test notification** under **Settings → Notifications**. If nothing shows up, turn notifications on in **Windows Settings → System → Notifications**. Some companies block them.
+</details>
+
+## Privacy
+
+Your email stays between your PC and Microsoft. The AI runs on your own computer through Ollama, and your settings, replies and sign-in are stored only in the app's folder. The sign-in is encrypted by Windows.
 
 ## IT setup
 
-*Only needed for the **Microsoft account** connection. For the company's Microsoft 365 / Entra ID administrator. Takes about 5 minutes.*
+*Only needed for the Microsoft account connection.*
 
-**What the app is:** a desktop program that runs on the user's PC. It signs in as the user (delegated permissions only), reads and replies to **that user's own mailbox**, and runs its AI model locally through Ollama. There is no server, and no mail content is sent anywhere except Microsoft. Source code: <https://github.com/kefirman9000/email-assistant>.
+<details>
+<summary><b>Steps for your Microsoft 365 administrator (about 5 minutes)</b></summary>
+
+**What the app is:** a desktop program on the user's PC. It signs in as the user (delegated permissions only) and reads and replies to **that user's own mailbox**. Its AI runs locally through Ollama. There is no server, and no mail content is sent anywhere except Microsoft.
 
 1. In the **Microsoft Entra admin center**, go to **Identity → Applications → App registrations → New registration**.
    - **Name:** Email Assistant
    - **Supported account types:** Accounts in this organizational directory only (single tenant)
    - **Redirect URI:** platform **Public client/native (mobile & desktop)**, value `http://localhost`
-2. Open the new app's **Authentication** page and set **Allow public client flows** to **Yes**. Save.
+2. On the app's **Authentication** page, set **Allow public client flows** to **Yes**. Save.
 3. On **API permissions**, choose **Add a permission → Microsoft Graph → Delegated permissions** and add:
-   - `User.Read` – see who is signed in
-   - `Mail.ReadWrite` – read the inbox, create reply drafts, mark emails read and tag them "AI Replied"
-   - `Mail.Send` – send the replies the user approves
-   - `offline_access` – stay signed in between sessions
-4. Click **Grant admin consent** for your organization (or let users consent themselves, if your policy allows it).
-5. Give the user the **Application (client) ID** and **Directory (tenant) ID** from the app's **Overview** page. They enter these under **Settings → Microsoft account**.
+   - `User.Read`: see who is signed in
+   - `Mail.ReadWrite`: read the inbox, create reply drafts, mark emails read and tag them "AI Replied"
+   - `Mail.Send`: send the replies the user approves
+   - `offline_access`: stay signed in between sessions
+4. Click **Grant admin consent** for your organization.
+5. Give the user the **Application (client) ID** and **Directory (tenant) ID** from the app's **Overview** page.
 
-Conditional Access and MFA apply to sign-in as normal. Users can revoke access at any time from <https://myapps.microsoft.com>, and admins can remove the app registration.
-
-## Settings reference
-
-| Setting | What it does |
-|---|---|
-| Connection | **Microsoft account** (App ID and Directory ID from IT, then Sign in) or **Classic Outlook on this PC**. Test connection works for both |
-| Reply template | Greeting and sign-off wrapped around every suggestion. `{first_name}` = sender's first name, `{my_name}` = your name. Live preview included |
-| Rules for the assistant | Extra do's and don'ts for the AI |
-| Never suggest replies to these senders | Addresses or partial matches (e.g. `@vendor.com`) to always skip |
-| Quick replies | Your saved one-click replies. Each has its own **Greeting & sign-off** switch |
-| Notifications | A Windows notification (and a flashing taskbar button) when a check finds new emails that need you. Option for urgent emails only, plus a **Send a test notification** button |
-| Sending pace | Replies go out one at a time with a random pause between them, never within a few minutes of an email arriving, and up to an hourly limit, so they look hand-sent rather than automated |
-| Appearance | **Match Windows**, **Light** or **Dark**. There's also a **Dark mode** switch at the top of the window |
-| AI model name | Any model pulled in Ollama (default `llama3.1:8b`) |
+Conditional Access and MFA apply as normal. Users can remove the app's access at <https://myapps.microsoft.com>, and admins can delete the app registration at any time.
+</details>
