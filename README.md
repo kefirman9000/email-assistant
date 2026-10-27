@@ -4,7 +4,7 @@
 
 Email Assistant checks your inbox, drafts replies to the easy emails, flags the ones that need a real answer from you, and lets you review, edit and send each reply in a couple of clicks. The AI runs locally, so your email is never sent to an AI company.
 
-**[⬇ Download Email Assistant](https://github.com/kefirman9000/email-assistant/archive/refs/heads/stable.zip)** · Windows 10 or 11 · Free
+**[⬇ Download Email Assistant](https://github.com/kefirman9000/email-assistant/releases/latest/download/EmailAssistantSetup.exe)** · Windows 10 or 11 · Free
 
 ![Inbox](docs/screenshots/inbox.png)
 
@@ -27,12 +27,16 @@ Email Assistant checks your inbox, drafts replies to the easy emails, flags the 
 
 ## Getting started
 
-You'll need **[Python](https://www.python.org/downloads/)** (tick *Add python.exe to PATH* while installing) and **[Ollama](https://ollama.com/download)**, the free program that runs the AI on your PC.
+1. **[Download EmailAssistantSetup.exe](https://github.com/kefirman9000/email-assistant/releases/latest/download/EmailAssistantSetup.exe)** and open it. No administrator rights are needed.
+   Windows may say *"Windows protected your PC"* because the app is new and not from a big publisher: click **More info → Run anyway**.
+2. Email Assistant opens and **walks you through setting up the AI**: installing Ollama (the free program that runs the AI on your PC) and a one-time download of about 5 GB.
+3. On the **Settings** tab, enter your name, choose your **Connection** (below), check your greeting and sign-off, and click **Save settings**. Then click **Test connection**.
 
-1. **[Download Email Assistant](https://github.com/kefirman9000/email-assistant/archive/refs/heads/stable.zip)** and unzip it somewhere like your Documents folder.
-2. Double-click **Setup.bat** and wait for *All done!* The first AI download can take a while.
-3. Double-click **Start Email Assistant**. Tip: right-click it → *Send to* → *Desktop (create shortcut)*.
-4. On the **Settings** tab, enter your name, choose your **Connection** (below), check your greeting and sign-off, and click **Save settings**. Then click **Test connection**.
+<details>
+<summary>Prefer not to use the installer?</summary>
+
+Install **[Python](https://www.python.org/downloads/)** (tick *Add python.exe to PATH*) and **[Ollama](https://ollama.com/download)**, download the **[zip](https://github.com/kefirman9000/email-assistant/archive/refs/heads/stable.zip)**, unzip it, run **Setup.bat**, then **Start Email Assistant**.
+</details>
 
 ### Choosing a connection
 
@@ -62,7 +66,7 @@ When a new version is out, an orange **Update available** button appears at the 
 <details>
 <summary><b>"The AI program (Ollama) isn't running"</b></summary>
 
-Open **Ollama** from the Start menu, wait a few seconds, then try again. If it says the AI model isn't downloaded, run **Setup.bat** again.
+Click **Set up the AI** (it also opens on its own when needed, and lives under **Settings → Advanced**). It shows what's missing and fixes it with one click: installing Ollama, starting it, or downloading the AI model.
 </details>
 
 <details>
