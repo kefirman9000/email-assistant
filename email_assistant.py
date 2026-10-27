@@ -43,7 +43,7 @@ try:
 except ImportError:
     pythoncom = None
 
-APP_VERSION = "2.5.0"                         # bump this for every release
+APP_VERSION = "2.5.1"                         # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 # Microsoft sign-in. IT gives you these two values (see README, "IT setup").
@@ -4071,7 +4071,42 @@ def set_app_icon(root):
         pass
 
 
+def self_test():
+    """Used by the installer build: load everything, build the window, then quit.
+    Exit code 0 means the packaged app works."""
+    problems = []
+    for mod in ("msal", "msal_extensions", "pythoncom", "win32com.client", "ctypes"):
+        try:
+            __import__(mod)
+        except Exception as e:
+            problems.append(f"import {mod}: {e}")
+    try:
+        apply_palette("dark")
+        root = tk.Tk()
+        setup_theme(root)
+        set_app_icon(root)
+        app = EmailAssistant(root)
+        root.update()
+        app.open_ai_setup()
+        root.update()
+        app.stop_timers()
+        root.destroy()
+    except Exception as e:
+        import traceback
+        problems.append("window: " + "".join(traceback.format_exception(e))[-1500:])
+    report = "OK" if not problems else "\n".join(problems)
+    out = os.environ.get("SELF_TEST_OUT")
+    if out:
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(report)
+    else:
+        print(report)
+    sys.exit(1 if problems else 0)
+
+
 def main():
+    if "--self-test" in sys.argv:
+        self_test()
     enable_crisp_text()
     geometry, tab = None, None
     while True:
