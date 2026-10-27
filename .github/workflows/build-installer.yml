@@ -59,6 +59,16 @@ jobs:
           --hidden-import win32timezone
           email_assistant.py
 
+      - name: Test the packaged app starts
+        if: steps.check.outputs.exists != 'true'
+        shell: pwsh
+        run: |
+          $env:SELF_TEST_OUT = "$env:RUNNER_TEMP\self_test.txt"
+          $p = Start-Process -FilePath "dist\Email Assistant\Email Assistant.exe" -ArgumentList "--self-test" -Wait -PassThru
+          if (Test-Path $env:SELF_TEST_OUT) { Get-Content $env:SELF_TEST_OUT }
+          Remove-Item "dist\Email Assistant\settings.json", "dist\Email Assistant\assistant_data.json" -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { Write-Error "Self-test failed (exit $($p.ExitCode))"; exit 1 }
+
       - name: Build the installer
         if: steps.check.outputs.exists != 'true'
         shell: pwsh
