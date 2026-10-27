@@ -1,4 +1,4 @@
 {
-  "version": "2.4.1",
-  "notes": "Dark mode is now a simple on/off switch at the top of the window, with a Check for updates button right next to it."
+  "version": "2.4.2",
+  "notes": "While the AI writes your two reply options, the reply picker now shows an animated preview of where they'll appear."
 }

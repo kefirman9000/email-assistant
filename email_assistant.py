@@ -11,6 +11,7 @@ Start it by double-clicking "Start Email Assistant.bat".
 
 import base64
 import json
+import math
 import os
 import queue
 import random
@@ -41,7 +42,7 @@ try:
 except ImportError:
     pythoncom = None
 
-APP_VERSION = "2.4.1"                         # bump this for every release
+APP_VERSION = "2.4.2"                         # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 # Microsoft sign-in. IT gives you these two values (see README, "IT setup").
@@ -1713,6 +1714,13 @@ def field_text(parent, height, **kw):
     return tk.Text(parent, **opts)
 
 
+def blend(c1, c2, t):
+    """Mix two #rrggbb colours (t=0 gives c1, t=1 gives c2)."""
+    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(a, b))
+
+
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
     pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
            x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
@@ -3358,7 +3366,61 @@ class EmailAssistant:
             for l, b in chip_btns.items():
                 b.set_kind("chip_on" if l == label else "chip")
 
+        state["anim"] = 0
+
+        def show_loading(what=""):
+            """Two placeholder cards with shimmering lines while the AI writes."""
+            for w in cards.winfo_children():
+                w.destroy()
+            state["anim"] += 1
+            token = state["anim"]
+            canvases, titles = [], []
+            for col in range(2):
+                outer = tk.Frame(cards, bg=BORDER)
+                outer.grid(row=0, column=col, sticky="nsew",
+                           padx=(0, px(12)) if col == 0 else 0)
+                card = tk.Frame(outer, bg=CARD, padx=px(16), pady=px(14))
+                card.pack(fill="both", expand=True, padx=1, pady=1)
+                head = tk.Frame(card, bg=CARD)
+                head.pack(fill="x")
+                pill(head, f"Option {'AB'[col]}", *B_PURPLE).pack(side="left")
+                title = tk.Label(head, text="", font=FONT_B, bg=CARD, fg=MUTED, width=24,
+                                 anchor="w")
+                title.pack(side="left", padx=(px(8), 0))
+                titles.append(title)
+                box = tk.Frame(card, bg=EDIT_BG, highlightthickness=1,
+                               highlightbackground=FIELD_BORDER, padx=px(12), pady=px(12))
+                box.pack(fill="both", expand=True, pady=(px(10), 0))
+                c = tk.Canvas(box, bg=EDIT_BG, highlightthickness=0, height=px(170))
+                c.pack(fill="both", expand=True)
+                canvases.append(c)
+            words = f"Writing {what}reply" if what else "Writing a reply"
+            lines = (0.35, 0.94, 0.88, 0.97, 0.62, 0.0, 0.28, 0.22)   # 0 = blank line
+            dim, bright = EDIT_BG, ("#c6cad2" if not DARK_MODE else "#3d4352")
+
+            def frame(t=0):
+                if state["anim"] != token:
+                    return
+                try:
+                    for i, c in enumerate(canvases):
+                        c.delete("all")
+                        w = max(c.winfo_width(), px(200))
+                        for j, frac in enumerate(lines):
+                            if not frac:
+                                continue
+                            y = j * px(21)
+                            k = (math.sin(t * 0.18 - j * 0.55 - i * 0.9) + 1) / 2
+                            col = blend(dim, bright, 0.35 + 0.65 * k)
+                            _round_rect(c, 0, y, max(px(20), int(w * frac)), y + px(12),
+                                        px(6), fill=col, outline=col)
+                        titles[i].configure(text=words + "." * (1 + (t // 5 + i) % 3))
+                except tk.TclError:
+                    return               # the window was closed
+                cards.after(40, frame, t + 1)
+            frame()
+
         def show_options(options):
+            state["anim"] += 1                 # stop the loading animation
             for w in cards.winfo_children():
                 w.destroy()
             on = uses_template(self.settings, e)
@@ -3414,6 +3476,7 @@ class EmailAssistant:
             highlight(label)
             what = f"{label.lower()} " if label and label != "custom" else ""
             set_busy(True, f"Writing two {what}options...")
+            show_loading(what)
             settings = dict(self.settings)
 
             def done(res, err):
@@ -3421,8 +3484,15 @@ class EmailAssistant:
                     return
                 set_busy(False)
                 if err:
+                    state["anim"] += 1
+                    for w in cards.winfo_children():
+                        w.destroy()
                     status.configure(text="Couldn't write replies: " +
                                           friendly_error(err).split("\n")[0])
+                    tk.Label(cards, text="Couldn't write replies this time.\n"
+                                         + friendly_error(err).split("\n")[0],
+                             font=FONT, bg=BG, fg=MUTED, justify="center"
+                             ).grid(row=0, column=0, columnspan=2, pady=px(60))
                     return
                 state["body"], options = res
                 show_options(options)
