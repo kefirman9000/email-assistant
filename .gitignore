@@ -6,3 +6,5 @@ backup/
 *.tmp
 *.new
 __pycache__/
+signin_cache.bin
+signin_cache.bin.lockfile

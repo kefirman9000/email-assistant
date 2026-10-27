@@ -1,4 +1,4 @@
 {
-  "version": "1.1.1",
-  "notes": "Clearer messages when the app can't connect to Outlook, explaining what to do. New 'Test Outlook connection' button in Settings."
+  "version": "2.0.0",
+  "notes": "Big update! Email Assistant now works with the NEW Outlook (and Outlook on the web). It connects through Microsoft's official mail service, so you'll need to sign in once under Settings > Microsoft account using two codes from your IT department.\n\nAlso new: an Inbox start screen that shows every email (even ones the assistant skipped), a built-in email viewer, urgency labels, 'Send test emails' to try things out safely, and a simpler greeting/sign-off editor with a live preview."
 }
