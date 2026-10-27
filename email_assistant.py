@@ -40,7 +40,7 @@ try:
 except ImportError:
     pythoncom = None
 
-APP_VERSION = "2.1.2"                         # bump this for every release
+APP_VERSION = "2.1.3"                         # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 # Microsoft sign-in. IT gives you these two values (see README, "IT setup").
@@ -89,35 +89,6 @@ MAX_EMAILS_PER_CHECK = 100
 MAX_BODY_CHARS = 4000
 MAX_INBOX_ITEMS = 300
 
-# Test emails you can send to yourself (Inbox tab > "Send test emails")
-TEST_TAG = "[Email Assistant test]"
-TEST_SAMPLES = [
-    {"label": "Thank-you / got your file", "importance": "normal",
-     "subject": "Q3 report attached",
-     "body": "Hi,\n\nAttached is the Q3 report you asked for. Could you confirm you got it?"
-             "\n\nThanks,\nJordan"},
-    {"label": "Meeting time to confirm", "importance": "normal",
-     "subject": "Quick sync Thursday at 2pm?",
-     "body": "Hi,\n\nWould Thursday at 2pm work for a 20-minute sync on the proposal?"
-             "\n\nBest,\nPriya"},
-    {"label": "URGENT request from a client", "importance": "high",
-     "subject": "URGENT: invoice discrepancy needs fixing today",
-     "body": "Hello,\n\nWe were billed twice for order #4471. This needs to be corrected "
-             "today before our month-end close. Please call me as soon as possible."
-             "\n\nRegards,\nMorgan Lee\nAcme Corp"},
-    {"label": "Decision only you can make", "importance": "high",
-     "subject": "Budget numbers for next year",
-     "body": "Hi,\n\nWhat budget do you need for your team next year? I need final numbers "
-             "by Friday for the planning meeting.\n\nThanks,\nDana"},
-    {"label": "Low-priority FYI", "importance": "low",
-     "subject": "FYI: office closed Monday",
-     "body": "Hi all,\n\nJust a reminder that the office will be closed on Monday for "
-             "maintenance. No action needed.\n\nFacilities"},
-    {"label": "Simple yes/no question", "importance": "normal",
-     "subject": "Still OK to use the small conference room?",
-     "body": "Hey,\n\nAre we still OK to use the small conference room for our 10am "
-             "tomorrow, like you mentioned?\n\nThanks!\nSam"},
-]
 IMPORTANCE_LABELS = {"high": "High urgency", "normal": "Normal", "low": "Low urgency"}
 STATUS_LABELS = {
     "simple": "Reply suggested", "needs_you": "Needs you", "no_reply": "No reply needed",
@@ -509,16 +480,6 @@ class Graph:
                       prefer='outlook.body-content-type="text"')
         return (d.get("body") or {}).get("content", "")
 
-    def send_test_mail(self, to_addr, subject, body, importance="normal"):
-        """Send an email to yourself for testing (not saved in Sent Items)."""
-        self.call("POST", "/me/sendMail", body={
-            "message": {"subject": f"{TEST_TAG} {subject}",
-                        "body": {"contentType": "Text", "content": body},
-                        "importance": importance if importance in IMPORTANCE_LABELS
-                        else "normal",
-                        "toRecipients": [{"emailAddress": {"address": to_addr}}]},
-            "saveToSentItems": False})
-
     # --- replying ---
     def create_reply_draft(self, msg_id, text):
         """Creates a reply (with the original quoted) in Drafts. Returns draft id."""
@@ -647,10 +608,7 @@ def _com_codes(exc):
 def outlook_send_failure(exc, step, first_step=None):
     """Explain why classic Outlook wouldn't send, in plain English."""
     _, inner, text = _com_codes(exc)
-    if step == "addressing it to you" or "match your own address" in str(exc):
-        hint = ("Outlook couldn't find your own email address in its address book. "
-                "Try 'Test connection' in Settings to see which address Outlook reports.")
-    elif inner == -2147467260 or "abort" in text.lower():   # E_ABORT
+    if inner == -2147467260 or "abort" in text.lower():   # E_ABORT
         hint = ("Outlook blocked it. If you saw a warning like 'A program is trying to "
                 "send an email on your behalf', click Allow and try again.")
     elif step == "creating the email":
@@ -790,79 +748,6 @@ class ClassicOutlook:
 
     def message_body(self, msg_id):
         return self.ns.GetItemFromID(msg_id).Body or ""
-
-    def _address_to_me(self, mail, to_addr):
-        """Add yourself as the recipient. Tries your email address first, then your
-        name as Outlook knows it (works when the address is an internal Exchange one)."""
-        tried = []
-        candidates = [to_addr]
-        try:
-            candidates.append(self.ns.CurrentUser.Name)
-        except Exception:
-            pass
-        for cand in candidates:
-            if not cand or cand in tried:
-                continue
-            tried.append(cand)
-            try:
-                rec = mail.Recipients.Add(cand)
-                if rec.Resolve():
-                    return
-                rec.Delete()
-            except Exception:
-                continue
-        raise RuntimeError("Outlook couldn't match your own address "
-                           f"(tried: {', '.join(tried) or 'nothing'})")
-
-    def _new_mail(self):
-        """Create a blank email. Outlook sometimes refuses one method but accepts
-        another, so try a few before giving up."""
-        attempts = [
-            lambda: self.app.CreateItem(0),
-            lambda: (self.ns.Logon("", "", False, False), self.app.CreateItem(0))[1],
-            lambda: self.ns.GetDefaultFolder(16).Items.Add("IPM.Note"),   # in Drafts
-        ]
-        last = None
-        for make in attempts:
-            try:
-                mail = make()
-                if mail is not None:
-                    return mail
-            except Exception as e:
-                last = e
-        raise last or RuntimeError("Outlook didn't create the email")
-
-    def _send_one_test(self, to_addr, subject, body, importance, keep_copy):
-        step = "creating the email"
-        try:
-            mail = self._new_mail()
-            step = "filling in the subject and text"
-            mail.Subject = f"{TEST_TAG} {subject}"
-            mail.Body = body
-            mail.Importance = {"low": 0, "normal": 1, "high": 2}.get(importance, 1)
-            step = "addressing it to you"
-            self._address_to_me(mail, to_addr)
-            if not keep_copy:
-                step = "turning off the Sent Items copy"
-                mail.DeleteAfterSubmit = True
-            step = "sending it"
-            mail.Send()
-        except Exception as e:
-            e.step = step
-            raise
-
-    def send_test_mail(self, to_addr, subject, body, importance="normal"):
-        # First try without a Sent Items copy; some Outlook setups refuse that,
-        # so if anything fails, try again normally with a fresh email.
-        try:
-            self._send_one_test(to_addr, subject, body, importance, keep_copy=False)
-            return
-        except Exception as first:
-            first_step = getattr(first, "step", "?")
-        try:
-            self._send_one_test(to_addr, subject, body, importance, keep_copy=True)
-        except Exception as e:
-            raise GraphError(outlook_send_failure(e, getattr(e, "step", "?"), first_step))
 
     def create_reply_draft(self, msg_id, text):
         try:
@@ -1036,7 +921,6 @@ Respond only with JSON."""
 
 
 def email_text(name, addr, subject, body, importance="normal"):
-    subject = subject.replace(TEST_TAG, "").strip()
     urgency = "Importance: HIGH\n" if importance == "high" else ""
     return (f"From: {name} <{addr}>\nSubject: {subject}\n{urgency}\n"
             f"{(body or '')[:MAX_BODY_CHARS]}")
@@ -1074,7 +958,6 @@ def check_worker(settings, processed, out):
             name = sender.get("name") or addr
             subject = m.get("subject") or "(no subject)"
             importance = (m.get("importance") or "normal").lower()
-            is_test = subject.startswith(TEST_TAG)
             to = {((r.get("emailAddress") or {}).get("address") or "").lower()
                   for r in m.get("toRecipients") or []}
             entry = {"id": mid, "source": "graph", "from": name,
@@ -1082,14 +965,12 @@ def check_worker(settings, processed, out):
                      "subject": subject, "web_link": m.get("webLink") or "",
                      "received": local_time_label(m.get("receivedDateTime")),
                      "received_iso": m.get("receivedDateTime") or "",
-                     "importance": importance, "is_test": is_test,
+                     "importance": importance,
                      "preview": (m.get("bodyPreview") or "").strip()[:300],
                      "reason": "", "reply": ""}
 
             skip = None
-            if is_test:
-                pass                     # test emails to yourself are always reviewed
-            elif addr and addr in me:
+            if addr and addr in me:
                 skip = "sent by you"
             elif any(s and s in addr for s in ignored):
                 skip = "sender is on your ignore list"
@@ -1739,8 +1620,6 @@ class EmailAssistant:
             self.badge(parent, "HIGH URGENCY", "#991b1b", "#fee2e2").pack(side="left", padx=(8, 0))
         elif imp == "low":
             self.badge(parent, "LOW URGENCY", "#475569", "#f1f5f9").pack(side="left", padx=(8, 0))
-        if e.get("is_test"):
-            self.badge(parent, "TEST", "#6d28d9", "#ede9fe").pack(side="left", padx=(6, 0))
 
     def status_badge(self, parent, status):
         colors = {"simple": ("#166534", "#dcfce7"), "needs_you": ("#9a3412", "#ffedd5"),
@@ -1756,12 +1635,10 @@ class EmailAssistant:
         bar.pack(fill="x", padx=8, pady=(10, 2))
         tk.Label(bar, text="Every email from your checks, including the ones the assistant "
                            "skipped.", font=FONT, bg=BG, fg=MUTED).pack(side="left")
-        button(bar, "Send test emails", self.open_test_dialog).pack(side="right")
         items = self.data["inbox"]
         if not items:
             self.empty(area.inner, "No emails yet.\n\nChoose a time range above and click "
-                                   "'Check emails'.\nTo try things out safely, click "
-                                   "'Send test emails' to email yourself some samples.")
+                                   "'Check emails'.")
             return
         for e in items:
             outer = tk.Frame(area.inner, bg=BORDER)
@@ -2382,112 +2259,6 @@ class EmailAssistant:
                        + friendly_error(err) + ")")
             txt.configure(state="disabled")
         self.run_bg(lambda: mailbox(settings).message_body(e["id"]).strip(), done)
-
-    def open_test_dialog(self):
-        win = self.dialog("Send test emails to yourself", 640, 640)
-        wrap = tk.Frame(win, bg=BG, padx=20, pady=14)
-        wrap.pack(fill="both", expand=True)
-        tk.Label(wrap, text="Send test emails to yourself", font=FONT_H, bg=BG, fg=TEXT,
-                 anchor="w").pack(fill="x")
-        tk.Label(wrap, text=f"They arrive in your own inbox with \"{TEST_TAG}\" in the "
-                            "subject, so you can see how the assistant handles different "
-                            "kinds of email. Replies to them only go to you.",
-                 font=FONT_S, bg=BG, fg=MUTED, anchor="w", justify="left",
-                 wraplength=590).pack(fill="x", pady=(2, 10))
-
-        box = tk.Frame(wrap, bg=CARD, padx=12, pady=8, highlightthickness=1,
-                       highlightbackground=BORDER)
-        box.pack(fill="x")
-        tk.Label(box, text="Ready-made samples", font=FONT_B, bg=CARD, fg=TEXT,
-                 anchor="w").pack(fill="x", pady=(0, 4))
-        picks = []
-        for smp in TEST_SAMPLES:
-            v = tk.BooleanVar(value=True)
-            row = tk.Frame(box, bg=CARD)
-            row.pack(fill="x")
-            tk.Checkbutton(row, text=smp["label"], variable=v, font=FONT, bg=CARD,
-                           activebackground=CARD, anchor="w").pack(side="left")
-            self.urgency_badge(row, {"importance": smp["importance"]})
-            picks.append((v, smp))
-
-        cbox = tk.Frame(wrap, bg=CARD, padx=12, pady=10, highlightthickness=1,
-                        highlightbackground=BORDER)
-        cbox.pack(fill="x", pady=(12, 0))
-        tk.Label(cbox, text="Your own test message (optional)", font=FONT_B, bg=CARD,
-                 fg=TEXT, anchor="w").pack(fill="x")
-        r1 = tk.Frame(cbox, bg=CARD)
-        r1.pack(fill="x", pady=(6, 4))
-        tk.Label(r1, text="Subject", font=FONT, bg=CARD, width=9, anchor="w").pack(side="left")
-        subj = tk.StringVar()
-        tk.Entry(r1, textvariable=subj, font=FONT, relief="solid", bd=1
-                 ).pack(side="left", fill="x", expand=True, ipady=3)
-        r2 = tk.Frame(cbox, bg=CARD)
-        r2.pack(fill="x", pady=(0, 4))
-        tk.Label(r2, text="Urgency", font=FONT, bg=CARD, width=9, anchor="w").pack(side="left")
-        urg = tk.StringVar(value="Normal")
-        ttk.Combobox(r2, textvariable=urg, values=["Low", "Normal", "High"],
-                     state="readonly", width=10, font=FONT).pack(side="left")
-        body = tk.Text(cbox, font=FONT, height=4, wrap="word", relief="solid", bd=1,
-                       padx=8, pady=6)
-        body.pack(fill="x")
-
-        btns = tk.Frame(wrap, bg=BG)
-        btns.pack(fill="x", pady=(14, 0))
-
-        def send():
-            mails = [dict(s) for v, s in picks if v.get()]
-            if subj.get().strip() or body.get("1.0", "end").strip():
-                mails.append({"subject": subj.get().strip() or "Test message",
-                              "body": body.get("1.0", "end").strip() or "(empty)",
-                              "importance": urg.get().lower()})
-            if not mails:
-                messagebox.showinfo("Test emails", "Pick at least one test email.",
-                                    parent=win)
-                return
-            settings = dict(self.settings)
-            send_btn.configure(state="disabled", text="Sending...")
-
-            def work():
-                g = mailbox(settings)
-                _, addrs = g.me()
-                if not addrs:
-                    raise GraphError("Couldn't find your email address.")
-                to = sorted(addrs, key=lambda a: "@" not in a)[0]
-                sent, errors = 0, []
-                for m in mails:
-                    try:
-                        g.send_test_mail(to, m["subject"], m["body"], m["importance"])
-                        sent += 1
-                    except (SignInNeeded, SetupNeeded):
-                        raise
-                    except Exception as ex:
-                        errors.append(ex)
-                if not sent:
-                    raise errors[0]
-                return sent, to, errors
-
-            def done(res, err):
-                if win.winfo_exists():
-                    send_btn.configure(state="normal", text="Send to myself")
-                if err:
-                    self.show_error(err, "Test emails")
-                    return
-                n, to, errors = res
-                if win.winfo_exists():
-                    win.destroy()
-                self.range_var.set("Past 30 minutes")
-                self.remember_check_options()
-                self.set_status(f"Sent {n} test email{'s' if n != 1 else ''} to {to}. "
-                                "Give them a minute to arrive, then click 'Check emails'.")
-                if errors:
-                    messagebox.showwarning(
-                        "Test emails", f"{len(errors)} of {n + len(errors)} test emails "
-                                       f"couldn't be sent.\n\n{friendly_error(errors[0])}")
-            self.run_bg(work, done)
-
-        send_btn = button(btns, "Send to myself", send, "primary")
-        send_btn.pack(side="left")
-        button(btns, "Cancel", win.destroy).pack(side="right")
 
     def discard(self, e):
         if messagebox.askyesno("Email Assistant",
