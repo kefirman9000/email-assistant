@@ -8,3 +8,6 @@ backup/
 __pycache__/
 signin_cache.bin
 signin_cache.bin.lockfile
+build/
+dist/
+*.spec

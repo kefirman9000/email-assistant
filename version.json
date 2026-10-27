@@ -1,4 +1,4 @@
 {
-  "version": "2.4.2",
-  "notes": "While the AI writes your two reply options, the reply picker now shows an animated preview of where they'll appear."
+  "version": "2.5.0",
+  "notes": "Email Assistant now has a Windows installer, so Python and Setup.bat are no longer needed.\n\nNew: a 'Set up the AI' helper that installs, starts and downloads the AI for you, with a progress bar.\n\nAlso: the 'Writing a reply' animation is now in sync, and the app has its own icon."
 }

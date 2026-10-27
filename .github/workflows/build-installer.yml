@@ -1,0 +1,86 @@
+name: Build Windows installer
+
+# Runs whenever a new version is published to the stable branch, on one of
+# GitHub's Windows machines. Packages the app with PyInstaller (so users don't
+# need Python), wraps it in an Inno Setup installer, and attaches
+# EmailAssistantSetup.exe to a GitHub release named after the version.
+
+on:
+  push:
+    branches: [stable]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = Get-Content version.json -Raw | ConvertFrom-Json
+          "version=$($v.version)" >> $env:GITHUB_OUTPUT
+          Set-Content -Path notes.md -Value $v.notes -Encoding utf8
+
+      - name: Skip if this version already has an installer
+        id: check
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $names = gh release view "v${{ steps.ver.outputs.version }}" --json assets --jq '.assets[].name' 2>$null
+          if ("$names" -match "EmailAssistantSetup\.exe") { "exists=true" >> $env:GITHUB_OUTPUT } else { "exists=false" >> $env:GITHUB_OUTPUT }
+          exit 0
+
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.exists != 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Package the app
+        if: steps.check.outputs.exists != 'true'
+        run: >
+          pyinstaller --noconfirm --clean --windowed
+          --name "Email Assistant"
+          --icon assets/icon.ico
+          --add-data "assets/icon.ico;assets"
+          --collect-submodules msal_extensions
+          --hidden-import win32timezone
+          email_assistant.py
+
+      - name: Build the installer
+        if: steps.check.outputs.exists != 'true'
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc installer\EmailAssistant.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Item dist\EmailAssistantSetup.exe | Format-List Name, Length
+
+      - name: Publish the release
+        if: steps.check.outputs.exists != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ steps.ver.outputs.version }}"
+          gh release view $tag 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag dist\EmailAssistantSetup.exe --clobber
+          } else {
+            gh release create $tag dist\EmailAssistantSetup.exe --title "Email Assistant ${{ steps.ver.outputs.version }}" --notes-file notes.md --target ${{ github.sha }}
+          }

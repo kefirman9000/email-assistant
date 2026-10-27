@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+import webbrowser
 import zipfile
 import urllib.error
 import urllib.parse
@@ -42,7 +43,7 @@ try:
 except ImportError:
     pythoncom = None
 
-APP_VERSION = "2.4.2"                         # bump this for every release
+APP_VERSION = "2.5.0"                         # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 # Microsoft sign-in. IT gives you these two values (see README, "IT setup").
@@ -52,7 +53,12 @@ DEFAULT_TENANT = "organizations"   # "organizations" = any work/school account
 GRAPH_SCOPES = ["Mail.ReadWrite", "Mail.Send", "User.Read"]
 GRAPH_URL = os.environ.get("EMAIL_ASSISTANT_GRAPH_URL", "https://graph.microsoft.com/v1.0")
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+# When installed with EmailAssistantSetup.exe the app is a packaged program
+FROZEN = bool(getattr(sys, "frozen", False))
+APP_DIR = os.path.dirname(sys.executable if FROZEN else os.path.abspath(__file__))
+RESOURCE_DIR = getattr(sys, "_MEIPASS", APP_DIR)
+ICON_FILE = os.path.join(RESOURCE_DIR, "assets", "icon.ico")
+INSTALLER_NAME = "EmailAssistantSetup.exe"
 SETTINGS_FILE = os.path.join(APP_DIR, "settings.json")
 STATE_FILE = os.path.join(APP_DIR, "assistant_data.json")
 TOKEN_FILE = os.path.join(APP_DIR, "signin_cache.bin")
@@ -1112,19 +1118,81 @@ def friendly_error(e):
 # ---------------------------------------------------------------------------
 # AI (Ollama)
 # ---------------------------------------------------------------------------
-def ollama_problem(model):
+OLLAMA_DOWNLOAD_URL = "https://ollama.com/download/windows"
+
+
+def ollama_paths():
+    """Where Ollama's programs are on this PC (the server and the tray app)."""
+    found = {}
+    cli = shutil.which("ollama")
+    base = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama")
+    for name, cand in (("cli", cli), ("cli", os.path.join(base, "ollama.exe")),
+                       ("app", os.path.join(base, "ollama app.exe"))):
+        if cand and os.path.exists(cand) and name not in found:
+            found[name] = cand
+    return found
+
+
+def ai_status(model):
+    """'ok', 'no_model' (running, model not downloaded), 'not_running' or 'missing'."""
     try:
-        with urllib.request.urlopen(OLLAMA_BASE + "/api/tags", timeout=5) as r:
+        with urllib.request.urlopen(OLLAMA_BASE + "/api/tags", timeout=4) as r:
             names = [m["name"] for m in json.loads(r.read())["models"]]
     except Exception:
-        return ("The AI program (Ollama) isn't running.\n\n"
-                "Open 'Ollama' from the Start menu, wait a few seconds, "
-                "then try again.")
-    if not any(n == model or n.startswith(model + ":") for n in names):
-        return (f"The AI model '{model}' isn't downloaded yet.\n\n"
-                "Double-click 'Setup.bat' in the Email Assistant folder, "
-                "then try again.")
-    return None
+        return "not_running" if ollama_paths() else "missing"
+    if any(n == model or n.startswith(model + ":") for n in names):
+        return "ok"
+    return "no_model"
+
+
+def start_ollama():
+    """Start Ollama in the background and wait (up to 30 s) until it answers."""
+    paths = ollama_paths()
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if "app" in paths:
+        subprocess.Popen([paths["app"]], creationflags=flags)
+    elif "cli" in paths:
+        subprocess.Popen([paths["cli"], "serve"], creationflags=flags,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        raise GraphError("Ollama isn't installed yet.")
+    for _ in range(30):
+        time.sleep(1)
+        try:
+            urllib.request.urlopen(OLLAMA_BASE + "/api/tags", timeout=2).close()
+            return True
+        except Exception:
+            pass
+    raise GraphError("Ollama didn't start. Try opening it from the Start menu.")
+
+
+def pull_model(model, progress):
+    """Download an AI model through Ollama, calling progress(fraction, text)."""
+    req = urllib.request.Request(OLLAMA_BASE + "/api/pull",
+                                 data=json.dumps({"name": model, "stream": True}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        for line in r:
+            if not line.strip():
+                continue
+            d = json.loads(line.decode("utf-8"))
+            if d.get("error"):
+                raise GraphError(f"The download stopped: {d['error']}")
+            total, done = d.get("total") or 0, d.get("completed") or 0
+            progress(done / total if total else None, d.get("status", ""), done, total)
+            if d.get("status") == "success":
+                return True
+    return True
+
+
+def ollama_problem(model):
+    st = ai_status(model)
+    if st == "ok":
+        return None
+    return {"missing": "The AI program (Ollama) isn't installed yet.",
+            "not_running": "The AI program (Ollama) isn't running.",
+            "no_model": f"The AI model '{model}' isn't downloaded yet."}[st] + (
+        "\n\nClick 'Set up the AI' and Email Assistant will walk you through it.")
 
 
 def ask_ollama(model, system, user, schema, temperature=0.2):
@@ -1252,7 +1320,7 @@ def check_worker(settings, processed, out):
     try:
         problem = ollama_problem(settings["model"])
         if problem:
-            out.put(("error", problem))
+            out.put(("ai_problem", problem))
             return
         g = mailbox(settings)
         out.put(("progress", "Connecting to Outlook..." if uses_classic(settings)
@@ -1437,9 +1505,40 @@ def latest_release():
     return max(candidates, key=lambda c: parse_version(c["version"]))
 
 
+def latest_installer_release():
+    """For the installed app: the newest GitHub release that has an installer."""
+    try:
+        d = _get_json(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+    asset = next((a for a in d.get("assets") or [] if a.get("name") == INSTALLER_NAME), None)
+    if not asset:
+        return None
+    return {"version": d["tag_name"].lstrip("vV"), "notes": (d.get("body") or "").strip(),
+            "installer_url": asset["browser_download_url"], "size": asset.get("size", 0)}
+
+
+def download_installer(info):
+    """Download the new installer to a temporary folder and check it looks right."""
+    folder = tempfile.mkdtemp(prefix="email_assistant_update_")
+    path = os.path.join(folder, f"EmailAssistantSetup-{info['version']}.exe")
+    req = urllib.request.Request(info["installer_url"],
+                                 headers={"User-Agent": f"EmailAssistant/{APP_VERSION}"})
+    with urllib.request.urlopen(req, timeout=300) as r, open(path, "wb") as f:
+        shutil.copyfileobj(r, f)
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        magic = f.read(2)
+    if magic != b"MZ" or size < 1_000_000 or (info.get("size") and size != info["size"]):
+        raise RuntimeError("The downloaded installer looks incomplete. Please try again.")
+    return path
+
+
 def update_check_worker(out, manual):
     try:
-        info = latest_release()
+        info = latest_installer_release() if FROZEN else latest_release()
         if info and parse_version(info["version"]) > parse_version(current_version()):
             out.put(("update_found", info, manual))
         else:
@@ -1528,6 +1627,9 @@ def install_update(info):
 
 def install_worker(info, out):
     try:
+        if FROZEN:
+            out.put(("update_installer_ready", info, download_installer(info)))
+            return
         out.put(("update_installed", info, install_update(info)))
     except Exception as e:
         out.put(("update_failed", str(e)))
@@ -1630,6 +1732,9 @@ def setup_theme(root):
               indicatorbackground=[("selected", ACCENT), ("active", ACCENT_SOFT)],
               upperbordercolor=[("selected", ACCENT), ("active", ACCENT)],
               lowerbordercolor=[("selected", ACCENT), ("active", ACCENT)])
+    style.configure("Accent.Horizontal.TProgressbar", troughcolor=EDIT_BG, background=BTN_PRIMARY,
+                    bordercolor=FIELD_BORDER, lightcolor=BTN_PRIMARY, darkcolor=BTN_PRIMARY,
+                    thickness=px(10))
     # Slim scrollbars without arrows
     style.layout("Thin.Vertical.TScrollbar", [
         ("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
@@ -2146,6 +2251,11 @@ class EmailAssistant:
             self.set_status("Sign in to your Microsoft account under Settings to get started.")
         if start_tab == "settings":
             self.tabs.select(self.set_tab)
+        if not geometry:                       # first window of this run
+            model = self.settings.get("model", DEFAULT_SETTINGS["model"])
+            self.root.after(1500, lambda: self.run_bg(
+                lambda: ai_status(model),
+                lambda st, err: st not in (None, "ok") and self.open_ai_setup()))
         if self.settings.get("check_updates_on_start", True) and not geometry:
             self.root.after(3000, lambda: self.check_for_updates(manual=False))
 
@@ -2827,6 +2937,7 @@ class EmailAssistant:
         # --- Advanced
         body = section("Advanced")
         entry(body, "model", "AI model name", 24)
+        button(body, "Set up the AI", self.open_ai_setup).pack(anchor="w", pady=(px(10), 0))
         tk.Frame(wrap, bg=BG, height=px(16)).pack()
         self.refresh_account()
 
@@ -3238,6 +3349,166 @@ class EmailAssistant:
             txt.configure(state="disabled")
         self.run_bg(lambda: mailbox(settings).message_body(e["id"]).strip(), done)
 
+    # ----- AI setup -----
+    def open_ai_setup(self):
+        """A small guided window: install Ollama, start it, download the model."""
+        existing = getattr(self, "_ai_win", None)
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            return
+        win = self.dialog("Set up the AI", 620, 520)
+        self._ai_win = win
+        model = self.settings.get("model", DEFAULT_SETTINGS["model"])
+        st = {"status": None, "busy": False}
+
+        wrap = tk.Frame(win, bg=BG, padx=px(26), pady=px(20))
+        wrap.pack(fill="both", expand=True)
+        tk.Label(wrap, text="Set up the AI", font=FONT_TITLE, bg=BG, fg=TEXT, anchor="w"
+                 ).pack(fill="x")
+        tk.Label(wrap, text="Email Assistant uses Ollama, a free program that runs the AI on "
+                            "your own computer, so your email never leaves your PC. This "
+                            "takes a few minutes, once.", font=FONT_S, bg=BG, fg=MUTED,
+                 anchor="w", justify="left", wraplength=px(560)).pack(fill="x", pady=(px(4), px(14)))
+
+        steps = []
+        for n, (title, desc) in enumerate((
+                ("Install Ollama", "Download it from ollama.com and run the installer."),
+                ("Start Ollama", "Ollama runs quietly in the background."),
+                ("Download the AI model", f"About 5 GB, one time only ({model}).")), 1):
+            outer = tk.Frame(wrap, bg=BORDER)
+            outer.pack(fill="x", pady=(0, px(10)))
+            card = tk.Frame(outer, bg=CARD, padx=px(16), pady=px(14))
+            card.pack(fill="both", padx=1, pady=1)
+            badge = tk.Canvas(card, width=px(30), height=px(30), bg=CARD, highlightthickness=0)
+            badge.pack(side="left", padx=(0, px(14)))
+            mid = tk.Frame(card, bg=CARD)
+            mid.pack(side="left", fill="x", expand=True)
+            t = tk.Label(mid, text=title, font=FONT_B, bg=CARD, fg=TEXT, anchor="w")
+            t.pack(fill="x")
+            d = tk.Label(mid, text=desc, font=FONT_S, bg=CARD, fg=MUTED, anchor="w",
+                         justify="left", wraplength=px(330))
+            d.pack(fill="x")
+            btn = button(card, "", None, "primary", small=True)
+            btn.pack(side="right")
+            steps.append({"n": n, "badge": badge, "title": t, "desc": d, "btn": btn,
+                          "mid": mid})
+
+        bar = ttk.Progressbar(steps[2]["mid"], style="Accent.Horizontal.TProgressbar",
+                              mode="determinate", maximum=1000)
+        bar_text = tk.Label(steps[2]["mid"], text="", font=FONT_S, bg=CARD, fg=MUTED,
+                            anchor="w")
+        foot = tk.Frame(wrap, bg=BG)
+        foot.pack(fill="x", side="bottom")
+        msg = tk.Label(foot, text="", font=FONT_S, bg=BG, fg=MUTED, anchor="w",
+                       justify="left", wraplength=px(420))
+        msg.pack(side="left")
+        close_btn = button(foot, "Close", win.destroy, "ghost")
+        close_btn.pack(side="right")
+
+        def draw_badge(step, state):
+            c = step["badge"]
+            c.delete("all")
+            s_ = px(30)
+            if state == "done":
+                c.create_oval(1, 1, s_ - 1, s_ - 1, fill=GOOD, outline=GOOD)
+                c.create_line(s_ * .28, s_ * .52, s_ * .44, s_ * .68, s_ * .73, s_ * .34,
+                              fill="white", width=max(2, px(2)), capstyle="round",
+                              joinstyle="round")
+            else:
+                fillc = BTN_PRIMARY if state == "current" else EDIT_BG
+                c.create_oval(1, 1, s_ - 1, s_ - 1, fill=fillc,
+                              outline=fillc if state == "current" else FIELD_BORDER)
+                c.create_text(s_ // 2, s_ // 2, text=str(step["n"]), font=FONT_B,
+                              fill="white" if state == "current" else SUBTLE)
+
+        actions = {1: ("Download Ollama", lambda: (webbrowser.open(OLLAMA_DOWNLOAD_URL),
+                                                   msg.configure(text="After installing "
+                                                   "Ollama, come back here. This window "
+                                                   "notices automatically."))),
+                   2: ("Start Ollama", lambda: do_start()),
+                   3: ("Download", lambda: do_pull())}
+
+        def render(status):
+            st["status"] = status
+            order = {"missing": 1, "not_running": 2, "no_model": 3, "ok": 4}[status]
+            for step in steps:
+                n = step["n"]
+                state = "done" if n < order else ("current" if n == order else "later")
+                draw_badge(step, state)
+                step["title"].configure(fg=TEXT if state != "later" else SUBTLE)
+                label, cmd = actions[n]
+                if state == "done":
+                    step["btn"].pack_forget()
+                else:
+                    step["btn"].pack(side="right")
+                    step["btn"].configure(text=label, command=cmd,
+                                          state="normal" if state == "current" and
+                                          not st["busy"] else "disabled")
+            if status == "ok":
+                msg.configure(text="All set! The AI is ready to write replies.", fg=GOOD)
+                close_btn.configure(text="Done", kind="good")
+
+        def recheck():
+            if not win.winfo_exists():
+                return
+            if not st["busy"]:
+                self.run_bg(lambda: ai_status(model),
+                            lambda r, e: win.winfo_exists() and r and render(r))
+            if st["status"] != "ok":
+                win.after(3000, recheck)
+
+        def do_start():
+            st["busy"] = True
+            render(st["status"])
+            msg.configure(text="Starting Ollama...", fg=MUTED)
+
+            def done(r, err):
+                st["busy"] = False
+                if not win.winfo_exists():
+                    return
+                msg.configure(text=friendly_error(err) if err else "Ollama is running.",
+                              fg=DANGER if err else MUTED)
+                self.run_bg(lambda: ai_status(model), lambda r2, e2: r2 and render(r2))
+            self.run_bg(start_ollama, done)
+
+        def do_pull():
+            st["busy"] = True
+            render(st["status"])
+            bar.pack(fill="x", pady=(px(8), px(2)))
+            bar_text.pack(fill="x")
+            bar_text.configure(text="Starting download...")
+            msg.configure(text="You can keep using your PC while this downloads.", fg=MUTED)
+
+            def progress(frac, text, done_b, total_b):
+                self.events.put(("bg", lambda r, e: show(frac, text, done_b, total_b),
+                                 None, None))
+
+            def show(frac, text, done_b, total_b):
+                if not win.winfo_exists():
+                    return
+                if frac is not None:
+                    bar.configure(value=int(frac * 1000))
+                    bar_text.configure(text=f"{done_b / 1e9:.1f} GB of {total_b / 1e9:.1f} GB "
+                                            f"({frac * 100:.0f}%)")
+                elif text:
+                    bar_text.configure(text=text.capitalize())
+
+            def done(r, err):
+                st["busy"] = False
+                if not win.winfo_exists():
+                    return
+                if err:
+                    msg.configure(text="The download stopped. Check your internet "
+                                       "connection and click Download to try again.", fg=DANGER)
+                else:
+                    bar.configure(value=1000)
+                    bar_text.configure(text="Downloaded.")
+                self.run_bg(lambda: ai_status(model), lambda r2, e2: r2 and render(r2))
+            self.run_bg(lambda: pull_model(model, progress), done)
+
+        render("missing")
+        recheck()
+
     # ----- quick replies -----
     def quick_menu(self, anchor, on_pick):
         """Pop up the list of saved quick replies under a button or link."""
@@ -3409,11 +3680,11 @@ class EmailAssistant:
                             if not frac:
                                 continue
                             y = j * px(21)
-                            k = (math.sin(t * 0.18 - j * 0.55 - i * 0.9) + 1) / 2
+                            k = (math.sin(t * 0.18 - j * 0.55) + 1) / 2
                             col = blend(dim, bright, 0.35 + 0.65 * k)
                             _round_rect(c, 0, y, max(px(20), int(w * frac)), y + px(12),
                                         px(6), fill=col, outline=col)
-                        titles[i].configure(text=words + "." * (1 + (t // 5 + i) % 3))
+                        titles[i].configure(text=words + "." * (1 + (t // 5) % 3))
                 except tk.TclError:
                     return               # the window was closed
                 cards.after(40, frame, t + 1)
@@ -3489,10 +3760,14 @@ class EmailAssistant:
                         w.destroy()
                     status.configure(text="Couldn't write replies: " +
                                           friendly_error(err).split("\n")[0])
-                    tk.Label(cards, text="Couldn't write replies this time.\n"
-                                         + friendly_error(err).split("\n")[0],
-                             font=FONT, bg=BG, fg=MUTED, justify="center"
-                             ).grid(row=0, column=0, columnspan=2, pady=px(60))
+                    box = tk.Frame(cards, bg=BG)
+                    box.grid(row=0, column=0, columnspan=2, pady=px(60))
+                    tk.Label(box, text="Couldn't write replies this time.\n"
+                                       + friendly_error(err).split("\n")[0],
+                             font=FONT, bg=BG, fg=MUTED, justify="center").pack()
+                    if "Set up the AI" in friendly_error(err):
+                        button(box, "Set up the AI", self.open_ai_setup, "primary"
+                               ).pack(pady=(px(12), 0))
                     return
                 state["body"], options = res
                 show_options(options)
@@ -3533,9 +3808,11 @@ class EmailAssistant:
                 f"A new version of Email Assistant is available.\n\n"
                 f"Your version: {current_version()}\nNew version: {info['version']}\n\n"
                 f"What's new:\n{notes}\n\n"
-                "Install it now? It will download the new version from GitHub, keep a "
-                "backup of the current one, install any add-ons it needs, and restart. "
-                "Your settings, sign-in and suggested replies are kept.\n\n"
+                + ("Install it now? Email Assistant will download the new version, close, "
+                   "install it, and open again. " if FROZEN else
+                   "Install it now? It will download the new version from GitHub, keep a "
+                   "backup of the current one, install any add-ons it needs, and restart. ")
+                + "Your settings, sign-in and suggested replies are kept.\n\n"
                 "Choose No to keep using this version. You can update any time from "
                 "the orange button or Settings."):
             return
@@ -3552,10 +3829,13 @@ class EmailAssistant:
                          daemon=True).start()
 
     def restart(self):
+        self._closing = True
+        self.stop_timers()
         self.save_now()
         script = os.path.join(APP_DIR, "email_assistant.py")
         try:
-            subprocess.Popen([sys.executable, script], cwd=APP_DIR)
+            subprocess.Popen([sys.executable] if FROZEN else [sys.executable, script],
+                             cwd=APP_DIR)
         except Exception:
             messagebox.showinfo("Email Assistant", "Please start Email Assistant again.")
         self.root.destroy()
@@ -3589,6 +3869,26 @@ class EmailAssistant:
             messagebox.showwarning("Email Assistant",
                                    "Couldn't check for updates. Make sure you're connected "
                                    f"to the internet and try again.\n\n({ev[1]})")
+        elif kind == "update_installer_ready":
+            _, info, path = ev
+            messagebox.showinfo("Update ready",
+                                f"Version {info['version']} is downloaded. Email Assistant "
+                                "will close, install the update, and open again in a few "
+                                "seconds.")
+            self.save_now()
+            try:
+                subprocess.Popen([path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+                                  "/CLOSEAPPLICATIONS"], cwd=os.path.dirname(path))
+            except Exception as e:
+                self.updating = False
+                self.update_btn.configure(state="normal",
+                                          text=f"Update available ({info['version']})")
+                self.check_btn.configure(state="normal")
+                messagebox.showwarning("Email Assistant", f"Couldn't start the installer.\n\n{e}")
+                return
+            self._closing = True
+            self.stop_timers()
+            self.root.destroy()
         elif kind == "update_installed":
             _, info, warning = ev
             msg = f"Version {info['version']} is installed. The app will now restart."
@@ -3620,8 +3920,8 @@ class EmailAssistant:
                     done(res, err)
                 elif kind.startswith("update_"):
                     self.handle_update_event(ev)
-                    if kind == "update_installed":
-                        return          # window is closing for the restart
+                    if getattr(self, "_closing", False):
+                        return          # window is closing for the restart/update
                 elif kind == "progress":
                     self.set_status(ev[1])
                 elif kind == "processed":
@@ -3671,6 +3971,13 @@ class EmailAssistant:
                     if isinstance(ev[1], SignInNeeded):
                         self.remember_account("")
                     self.ask_to_sign_in(then=self.start_check)
+                elif kind == "ai_problem":
+                    if self.auto_running:
+                        self.finish_check("Auto-refresh couldn't check: the AI isn't ready. "
+                                          "Click Set up the AI in Settings > Advanced.")
+                    else:
+                        self.finish_check("The AI isn't ready yet.")
+                        self.open_ai_setup()
                 elif kind == "error" and self.auto_running:
                     first = ev[1].split("\n")[0]
                     self.finish_check(f"Auto-refresh couldn't check just now: {first} "
@@ -3756,6 +4063,14 @@ def enable_crisp_text():
         pass
 
 
+def set_app_icon(root):
+    try:
+        if os.path.exists(ICON_FILE):
+            root.iconbitmap(default=ICON_FILE)
+    except Exception:
+        pass
+
+
 def main():
     enable_crisp_text()
     geometry, tab = None, None
@@ -3763,6 +4078,7 @@ def main():
         apply_palette(load_json(SETTINGS_FILE, DEFAULT_SETTINGS).get("theme", "system"))
         root = tk.Tk()
         setup_theme(root)
+        set_app_icon(root)
         app = EmailAssistant(root, geometry=geometry, start_tab=tab)
         dark_title_bar(root)
         root.mainloop()
