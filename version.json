@@ -1,4 +1,4 @@
 {
-  "version": "2.1.0",
-  "notes": "You can now choose how Email Assistant reaches your email under Settings > Connection: your Microsoft account (works with the new Outlook) or classic Outlook on this PC (no IT approval or sign-in needed).\n\nUpdates are now even more hands-off: the app just shows an orange 'Update available' button and never interrupts you. Nothing installs unless you click it and accept."
+  "version": "2.1.1",
+  "notes": "Fixes 'The operation failed' when sending test emails with classic Outlook. The app now tries other ways Outlook accepts, and if Outlook still refuses, it tells you exactly which step failed and what to check."
 }
