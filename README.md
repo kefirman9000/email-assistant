@@ -12,7 +12,7 @@ A simple Windows app that reads your unread work email in Outlook, suggests repl
 
 ## First-time setup
 
-1. Download the app: on this page click **Tags** (or **Releases**) → newest version → **zip**, then unzip it somewhere like your Documents folder.
+1. Download the app: <https://github.com/kefirman9000/email-assistant/archive/refs/heads/stable.zip>. Unzip it somewhere like your Documents folder.
 2. Double-click **Setup.bat** and wait for "All done!" (the AI download can take a while).
 3. Double-click **Start Email Assistant**.
 4. On the **Settings** tab, fill in your name, check the text that goes before and after every reply, and click **Save settings**.
@@ -39,16 +39,17 @@ The app checks for updates when it starts (and from **Settings → Check for upd
 
 ## For the maintainer: publishing an update
 
-1. Make your changes and bump `APP_VERSION` near the top of `email_assistant.py` (e.g. `"1.1.0"`).
-2. Commit and push to `main`.
-3. Publish it with a version tag that matches. The tag message is shown to the user as "What's new", so write it in plain English:
-   ```
-   git tag -a v1.1.0 -m "Replies now keep your Outlook signature."
-   git push origin v1.1.0
-   ```
-   A GitHub release (**Releases → Draft a new release**) works too; its notes are used instead.
+Work happens on `main`. Whatever is on the **`stable`** branch is what users get.
 
-Every copy of the app will offer the newest version next time it starts. The repository must be **public** so the app can download releases without a GitHub login.
+1. Make your changes on `main`.
+2. Edit `version.json`: raise `version` (e.g. `"1.1.0"`) and write `notes` in plain English. The notes are shown to the user as "What's new".
+3. Commit, then publish by updating `stable`:
+   ```
+   git push origin main
+   git push origin main:stable
+   ```
+
+Every copy of the app will offer the new version the next time it starts. A version tag (`v1.1.0`) or a GitHub release also works; the app picks whichever source has the highest version. The repository must be **public** so the app can download releases without a GitHub login.
 
 Files that are never committed or overwritten by updates: `settings.json`, `assistant_data.json`, `.installed_version`, `backup/`.
 
