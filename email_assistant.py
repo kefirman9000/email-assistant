@@ -37,7 +37,7 @@ except ImportError:
         "Please double-click 'Setup.bat' in this folder first, then try again.")
     sys.exit(1)
 
-APP_VERSION = "1.0.0"                          # bump this for every release
+APP_VERSION = "1.1.0"                          # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -58,7 +58,8 @@ DEFAULT_SETTINGS = {
                     "Never share confidential, personal, or financial information."),
     "ignored_senders": "",
     "model": "llama3.1:8b",
-    "lookback_hours": 24,
+    "check_range": "Past 24 hours",
+    "include_read": False,
     "auto_check_minutes": 0,
     "only_direct": True,
     "confirm_each_send": True,
@@ -68,7 +69,28 @@ DEFAULT_SETTINGS = {
 
 AUTOMATED_SENDERS = ["noreply", "no-reply", "donotreply", "do-not-reply",
                      "notifications", "mailer-daemon", "postmaster"]
-MAX_EMAILS_PER_CHECK = 40
+MAX_EMAILS_PER_CHECK = 100
+
+# Choices for "Look at" (label -> hours back, or "today" = since midnight)
+TIME_RANGES = [
+    ("Past 30 minutes", 0.5),
+    ("Past hour", 1),
+    ("Past 2 hours", 2),
+    ("Past 4 hours", 4),
+    ("Today", "today"),
+    ("Past 24 hours", 24),
+    ("Past 3 days", 72),
+    ("Past week", 168),
+]
+DEFAULT_RANGE = "Past 24 hours"
+
+
+def range_cutoff(label):
+    span = dict(TIME_RANGES).get(label, 24)
+    now = datetime.now()
+    if span == "today":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return now - timedelta(hours=float(span))
 MAX_BODY_CHARS = 4000
 OL_INBOX, OL_MAIL, OL_TO = 6, 43, 1
 PR_HEADERS = "http://schemas.microsoft.com/mapi/proptag/0x007D001F"
@@ -318,13 +340,18 @@ def check_worker(settings, processed, out):
             return
         me = my_address(ns)
         ignored = ignored_list(settings)
-        items = inbox.Items.Restrict("[UnRead] = True")
+        if settings.get("include_read"):
+            items = inbox.Items
+        else:
+            items = inbox.Items.Restrict("[UnRead] = True")
         items.Sort("[ReceivedTime]", True)
-        cutoff = datetime.now() - timedelta(hours=float(settings["lookback_hours"]))
-        counts = {"simple": 0, "needs_you": 0, "no_reply": 0, "skipped": 0}
+        cutoff = range_cutoff(settings.get("check_range"))
+        counts = {"simple": 0, "needs_you": 0, "no_reply": 0, "skipped": 0,
+                  "capped": False}
         n = 0
         for item in items:
             if n >= MAX_EMAILS_PER_CHECK:
+                counts["capped"] = True
                 break
             try:
                 if item.Class != OL_MAIL:
@@ -693,7 +720,25 @@ class EmailAssistant:
         top.pack(fill="x", padx=16, pady=(14, 8))
         tk.Label(top, text="Email Assistant", font=("Segoe UI", 16, "bold"),
                  bg=BG, fg=TEXT).pack(side="left")
-        self.check_btn = button(top, "Check for new emails", self.start_check, "primary")
+
+        # Check bar: which emails to look at
+        bar = tk.Frame(root, bg=BG)
+        bar.pack(fill="x", padx=16, pady=(0, 6))
+        tk.Label(bar, text="Look at emails from:", font=FONT, bg=BG, fg=TEXT
+                 ).pack(side="left")
+        labels = [lbl for lbl, _ in TIME_RANGES]
+        if self.settings.get("check_range") not in labels:
+            self.settings["check_range"] = DEFAULT_RANGE
+        self.range_var = tk.StringVar(value=self.settings["check_range"])
+        rng = ttk.Combobox(bar, textvariable=self.range_var, values=labels,
+                           state="readonly", width=16, font=FONT)
+        rng.pack(side="left", padx=(6, 14))
+        rng.bind("<<ComboboxSelected>>", lambda e: self.remember_check_options())
+        self.include_read_var = tk.BooleanVar(value=bool(self.settings.get("include_read")))
+        tk.Checkbutton(bar, text="Include emails I've already read",
+                       variable=self.include_read_var, command=self.remember_check_options,
+                       font=FONT, bg=BG, activebackground=BG).pack(side="left")
+        self.check_btn = button(bar, "Check emails", self.start_check, "primary")
         self.check_btn.pack(side="right")
         self.update_btn = tk.Button(top, text="", command=self.offer_update,
                                     bg="#f59e0b", fg="black", activebackground="#d97706",
@@ -721,7 +766,7 @@ class EmailAssistant:
 
         self.build_settings()
         self.render()
-        self.set_status("Click 'Check for new emails' to start." if not self.data["suggested"]
+        self.set_status("Click 'Check emails' to start." if not self.data["suggested"]
                         else "Review the suggested replies below.")
         self.root.after(150, self.poll)
         self.schedule_auto()
@@ -793,7 +838,7 @@ class EmailAssistant:
         items = self.data["suggested"]
         if not items:
             self.empty(area.inner, "No suggested replies right now.\n\n"
-                                   "Click 'Check for new emails' to look for new ones.")
+                                   "Click 'Check emails' to look for new ones.")
             return
         bar = tk.Frame(area.inner, bg=BG)
         bar.pack(fill="x", padx=8, pady=(10, 2))
@@ -967,8 +1012,8 @@ class EmailAssistant:
                 "One email address (or part of one, like a company name) per line.")
         textbox("ignored_senders", 3)
 
-        section("Checking email")
-        entry("lookback_hours", "Look at emails from the last (hours)", 8)
+        section("Checking email",
+                "Which emails to look at is chosen at the top of the window.")
         entry("auto_check_minutes", "Auto-check every (minutes, 0 = off)", 8)
         check("only_direct", "Only suggest replies when I'm on the 'To' line (not just CC'd)")
         check("confirm_each_send", "Show a final 'are you sure?' before sending each reply")
@@ -998,10 +1043,9 @@ class EmailAssistant:
             else:
                 new[k] = w.get()
         try:
-            new["lookback_hours"] = max(1, float(new["lookback_hours"]))
             new["auto_check_minutes"] = max(0, int(float(new["auto_check_minutes"])))
         except ValueError:
-            messagebox.showwarning("Email Assistant", "Hours and minutes must be numbers.")
+            messagebox.showwarning("Email Assistant", "Auto-check minutes must be a number.")
             return
         new["model"] = new["model"].strip() or DEFAULT_SETTINGS["model"]
         self.settings = new
@@ -1016,15 +1060,23 @@ class EmailAssistant:
         keep = {k: self.settings[k] for k in ("my_name", "my_role")}
         self.settings = dict(DEFAULT_SETTINGS, **keep)
         save_json(SETTINGS_FILE, self.settings)
+        self.range_var.set(self.settings["check_range"])
+        self.include_read_var.set(self.settings["include_read"])
         self.set_area.clear()
         self.build_settings()
         self.render()
         self.set_status("Settings reset to defaults.")
 
     # ----- actions -----
+    def remember_check_options(self):
+        self.settings["check_range"] = self.range_var.get()
+        self.settings["include_read"] = bool(self.include_read_var.get())
+        save_json(SETTINGS_FILE, self.settings)
+
     def start_check(self):
         if self.checking:
             return
+        self.remember_check_options()
         self.checking = True
         self.check_btn.configure(state="disabled", text="Checking...")
         self.set_status("Connecting to Outlook...")
@@ -1275,11 +1327,15 @@ class EmailAssistant:
                     changed = True
                 elif kind == "done":
                     c = ev[1]
-                    self.finish_check(
-                        f"Last checked {datetime.now().strftime('%I:%M %p').lstrip('0')}: "
-                        f"{c['simple']} new suggested repl{'y' if c['simple'] == 1 else 'ies'}, "
-                        f"{c['needs_you']} need your attention, "
-                        f"{c['no_reply'] + c['skipped']} didn't need a reply.")
+                    msg = (f"Checked {self.settings.get('check_range', DEFAULT_RANGE).lower()} "
+                           f"at {datetime.now().strftime('%I:%M %p').lstrip('0')}: "
+                           f"{c['simple']} new suggested repl{'y' if c['simple'] == 1 else 'ies'}, "
+                           f"{c['needs_you']} need your attention, "
+                           f"{c['no_reply'] + c['skipped']} didn't need a reply.")
+                    if c.get("capped"):
+                        msg += (f" Stopped after {MAX_EMAILS_PER_CHECK} emails; "
+                                "click Check again to continue.")
+                    self.finish_check(msg)
                     if c["simple"]:
                         self.tabs.select(self.sug_area)
                 elif kind == "error":
@@ -1310,7 +1366,7 @@ class EmailAssistant:
 
     def finish_check(self, msg):
         self.checking = False
-        self.check_btn.configure(state="normal", text="Check for new emails")
+        self.check_btn.configure(state="normal", text="Check emails")
         self.set_status(msg)
 
     def on_close(self):

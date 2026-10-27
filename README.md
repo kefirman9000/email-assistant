@@ -21,7 +21,7 @@ Tip: right-click *Start Email Assistant* → *Send to* → *Desktop (create shor
 
 ## Everyday use
 
-1. Click **Check for new emails**.
+1. Pick a time range under **Look at emails from** (past 30 minutes, past hour, today, past week...). Tick **Include emails I've already read** to look at read ones too. Then click **Check emails**.
 2. On **Suggested replies**, for each email you can:
    - **Open the original email** to read what was sent
    - Click in the white box to **edit the reply** (the grey text above and below is added automatically and can be changed in Settings)
@@ -60,6 +60,5 @@ Files that are never committed or overwritten by updates: `settings.json`, `assi
 | Text before / after every reply | Greeting and sign-off wrapped around every suggestion. `{first_name}` = sender's first name, `{my_name}` = your name |
 | Rules for the assistant | Extra do's and don'ts for the AI |
 | Never suggest replies to these senders | Addresses or partial matches (e.g. `@vendor.com`) to always skip |
-| Look at emails from the last (hours) | How far back each check goes (unread mail only) |
 | Check automatically every (minutes) | `0` = only when you click the button |
 | AI model name | Any model pulled in Ollama (default `llama3.1:8b`) |
