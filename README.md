@@ -40,10 +40,10 @@ Tip: right-click *Start Email Assistant* → *Send to* → *Desktop (create shor
 3. On **Suggested replies**, for each email you can:
    - Click in the white box to **edit the reply** (the grey greeting and sign-off are added automatically)
    - **Approve & send** (you'll see the full reply one more time before it goes)
-   - **Rewrite with AI**, e.g. "more formal" or "say yes but suggest 3pm"
+   - **Rewrite with AI**: shows **two different replies** side by side. Click a vibe (*Happier, More frank, Friendly acceptance, Friendly denial, More formal, More casual, Shorter, Apologetic, Ask for details*) for two new options in that style, or describe what you want (e.g. "say yes but suggest 3pm"). Edit either one, then click **Use this reply**
    - **Save as Outlook draft** to finish it in Outlook
    - **Move to 'needs attention'** or **Don't reply**
-4. **Needs your attention** lists emails the assistant couldn't safely answer. Click **Have AI draft a reply** and tell it what to say, or **Start a reply in Outlook Drafts**.
+4. **Needs your attention** lists emails the assistant couldn't safely answer. Click **Have AI draft a reply** to choose between AI options the same way, or **Start a reply in Outlook Drafts**.
 
 ## Updates
 
