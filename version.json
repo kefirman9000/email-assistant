@@ -1,4 +1,4 @@
 {
-  "version": "2.1.1",
-  "notes": "Fixes 'The operation failed' when sending test emails with classic Outlook. The app now tries other ways Outlook accepts, and if Outlook still refuses, it tells you exactly which step failed and what to check."
+  "version": "2.1.2",
+  "notes": "Classic Outlook: tries more ways to create emails when Outlook refuses, and explains the most likely reason if it still can't (Office not activated/licensed, which blocks new emails)."
 }
