@@ -28,6 +28,7 @@ from tkinter import ttk, messagebox, simpledialog
 try:
     import pythoncom
     import win32com.client
+    import win32com.client.dynamic
 except ImportError:
     _r = tk.Tk()
     _r.withdraw()
@@ -37,7 +38,7 @@ except ImportError:
         "Please double-click 'Setup.bat' in this folder first, then try again.")
     sys.exit(1)
 
-APP_VERSION = "1.1.0"                          # bump this for every release
+APP_VERSION = "1.1.1"                          # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -175,6 +176,103 @@ def put_text_in_reply(reply, text):
 # ---------------------------------------------------------------------------
 # Outlook helpers
 # ---------------------------------------------------------------------------
+class OutlookConnectError(Exception):
+    """Raised with a plain-English explanation of why Outlook isn't reachable."""
+
+
+def running_processes():
+    """Lower-case names of running programs (Windows), or an empty set."""
+    try:
+        res = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True,
+                             text=True, timeout=15,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return {line.split('","')[0].strip('"').lower()
+                for line in res.stdout.splitlines() if line.strip()}
+    except Exception:
+        return set()
+
+
+def classic_outlook_installed():
+    try:
+        import winreg
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                winreg.CloseKey(winreg.OpenKey(
+                    hive, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE"))
+                return True
+            except OSError:
+                pass
+        try:
+            winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,
+                                           r"Outlook.Application\CLSID"))
+            return True
+        except OSError:
+            return False
+    except Exception:
+        return None   # unknown
+
+
+def explain_outlook_failure(exc):
+    """Turn a connection error into advice a non-technical person can follow."""
+    procs = running_processes()
+    classic_running = "outlook.exe" in procs
+    new_running = "olk.exe" in procs
+    installed = classic_outlook_installed()
+    detail = f"{type(exc).__name__}: {exc}"
+    code = None
+    try:
+        code = exc.args[0] if isinstance(exc.args[0], int) else getattr(exc, "hresult", None)
+    except Exception:
+        pass
+
+    if new_running and not classic_running:
+        msg = ("You're using the NEW Outlook, which doesn't let other programs "
+               "connect to it.\n\n"
+               "To fix: in Outlook, turn OFF the 'New Outlook' switch in the top-right "
+               "corner (it switches you back to classic Outlook), then try again.\n\n"
+               "If there's no switch, your company may only allow the new Outlook. "
+               "This app can't work with it yet.")
+    elif installed is False:
+        msg = ("Classic Outlook doesn't seem to be installed on this PC. This app "
+               "needs the classic Outlook desktop app (part of Microsoft 365 / Office).\n\n"
+               "If you only have the new Outlook or use Outlook in a web browser, "
+               "this app can't work with it yet.")
+    elif not classic_running:
+        msg = ("Outlook isn't open.\n\nOpen Outlook, wait until your inbox has loaded, "
+               "then click Check emails again.")
+    elif code in (-2146959355,):          # CO_E_SERVER_EXEC_FAILURE
+        msg = ("Outlook and this app are running with different permissions "
+               "(one of them was started 'as administrator').\n\n"
+               "To fix: close Outlook completely, open it normally (not 'Run as "
+               "administrator'), then start Email Assistant normally too.")
+    elif code in (-2147221005, -2147221164):   # invalid class / class not registered
+        msg = ("Outlook is open, but Windows says it isn't registered for other programs "
+               "to use. Repairing Office usually fixes this: Settings > Apps > "
+               "Microsoft 365 / Office > Modify > Quick Repair.")
+    else:
+        msg = ("Outlook is open, but this app couldn't connect to it. A company security "
+               "setting may be blocking it, or Outlook may be showing a pop-up "
+               "waiting for an answer. Check Outlook for a pop-up, then try again.")
+    return (f"{msg}\n\n--- Details for whoever set this up ---\n{detail}\n"
+            f"Outlook programs running: classic={'yes' if classic_running else 'no'}, "
+            f"new={'yes' if new_running else 'no'}; classic installed: "
+            f"{'unknown' if installed is None else ('yes' if installed else 'no')}")
+
+
+def connect_outlook():
+    """Return Outlook's MAPI namespace, or raise OutlookConnectError."""
+    errors = []
+    for make in (lambda: win32com.client.Dispatch("Outlook.Application"),
+                 lambda: win32com.client.dynamic.Dispatch("Outlook.Application")):
+        try:
+            ns = make().GetNamespace("MAPI")
+            ns.GetDefaultFolder(OL_INBOX)        # proves we can really read mail
+            return ns
+        except Exception as e:
+            errors.append(e)
+    raise OutlookConnectError(explain_outlook_failure(errors[0]))
+
+
 def smtp_of(entry):
     try:
         if entry.AddressEntryUserType in (0, 5):
@@ -332,11 +430,10 @@ def check_worker(settings, processed, out):
             out.put(("error", problem))
             return
         try:
-            ns = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+            ns = connect_outlook()
             inbox = ns.GetDefaultFolder(OL_INBOX)
-        except Exception:
-            out.put(("error", "Couldn't connect to Outlook.\n\n"
-                              "Make sure Outlook is open and signed in, then try again."))
+        except OutlookConnectError as e:
+            out.put(("error", f"Couldn't connect to Outlook.\n\n{e}"))
             return
         me = my_address(ns)
         ignored = ignored_list(settings)
@@ -398,6 +495,38 @@ def check_worker(settings, processed, out):
         pythoncom.CoUninitialize()
 
 
+def outlook_test_worker(out):
+    """Read-only check: can we reach Outlook and see the inbox?"""
+    pythoncom.CoInitialize()
+    try:
+        ns = connect_outlook()
+        inbox = ns.GetDefaultFolder(OL_INBOX)
+        me = my_address(ns) or "(address not available)"
+        unread = inbox.UnReadItemCount
+        total = inbox.Items.Count
+        newest = ""
+        try:
+            items = inbox.Items
+            items.Sort("[ReceivedTime]", True)
+            first = items.GetFirst()
+            if first is not None:
+                newest = (f"\nNewest email: \"{(first.Subject or '')[:60]}\" from "
+                          f"{first.SenderName}, "
+                          f"{naive(first.ReceivedTime).strftime('%a %b %d, %I:%M %p')}")
+        except Exception:
+            pass
+        out.put(("outlook_test", True,
+                 f"Connected to Outlook!\n\nAccount: {me}\n"
+                 f"Inbox: {total} emails, {unread} unread{newest}"))
+    except OutlookConnectError as e:
+        out.put(("outlook_test", False, str(e)))
+    except Exception as e:
+        out.put(("outlook_test", False, f"Connected, but couldn't read the inbox.\n\n"
+                                        f"{type(e).__name__}: {e}"))
+    finally:
+        pythoncom.CoUninitialize()
+
+
 def write_worker(settings, entry, instructions, out):
     pythoncom.CoInitialize()
     try:
@@ -405,7 +534,7 @@ def write_worker(settings, entry, instructions, out):
         if problem:
             out.put(("write_done", entry["id"], None, problem))
             return
-        ns = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+        ns = connect_outlook()
         item = ns.GetItemFromID(entry["id"])
         user = email_text(entry["from"], entry["address"], entry["subject"], item.Body)
         if entry.get("reply"):
@@ -779,7 +908,7 @@ class EmailAssistant:
     # ----- helpers -----
     def outlook(self):
         if self._ns is None:
-            self._ns = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+            self._ns = connect_outlook()
         return self._ns
 
     def get_item(self, eid):
@@ -1014,6 +1143,12 @@ class EmailAssistant:
 
         section("Checking email",
                 "Which emails to look at is chosen at the top of the window.")
+        row_t = tk.Frame(wrap, bg=BG)
+        row_t.pack(fill="x", pady=(2, 8))
+        self.test_btn = button(row_t, "Test Outlook connection", self.test_outlook)
+        self.test_btn.pack(side="left")
+        tk.Label(row_t, text="Only reads your inbox. Nothing is changed or sent.",
+                 font=FONT_S, bg=BG, fg=MUTED).pack(side="left", padx=10)
         entry("auto_check_minutes", "Auto-check every (minutes, 0 = off)", 8)
         check("only_direct", "Only suggest replies when I'm on the 'To' line (not just CC'd)")
         check("confirm_each_send", "Show a final 'are you sure?' before sending each reply")
@@ -1068,6 +1203,11 @@ class EmailAssistant:
         self.set_status("Settings reset to defaults.")
 
     # ----- actions -----
+    def test_outlook(self):
+        self.test_btn.configure(state="disabled", text="Testing...")
+        threading.Thread(target=outlook_test_worker, args=(self.events,),
+                         daemon=True).start()
+
     def remember_check_options(self):
         self.settings["check_range"] = self.range_var.get()
         self.settings["include_read"] = bool(self.include_read_var.get())
@@ -1306,7 +1446,19 @@ class EmailAssistant:
             while True:
                 ev = self.events.get_nowait()
                 kind = ev[0]
-                if kind.startswith("update_"):
+                if kind == "outlook_test":
+                    _, ok, msg = ev
+                    try:
+                        self.test_btn.configure(state="normal",
+                                                text="Test Outlook connection")
+                    except tk.TclError:
+                        pass
+                    if ok:
+                        messagebox.showinfo("Outlook connection", msg)
+                    else:
+                        messagebox.showwarning("Outlook connection",
+                                               "Couldn't connect to Outlook.\n\n" + msg)
+                elif kind.startswith("update_"):
                     self.handle_update_event(ev)
                     if kind == "update_installed":
                         return          # window is closing for the restart
