@@ -63,7 +63,7 @@ Tip: right-click *Start Email Assistant* → *Send to* → *Desktop (create shor
 
 ## Updates
 
-**Updates are only installed when you accept them.** When the app starts, it quietly checks for a new version. If there is one, an orange **Update available** button appears at the top. Nothing else happens until you click it, read what's new, and choose **Yes**. Only then does it download the update, keep a backup of the old version in the `backup` folder, install, and restart. Your settings, sign-in and pending replies are kept. You can also check any time from **Settings → Check for updates now**, or turn off the startup check there.
+**Updates are only installed when you accept them.** When the app starts, it quietly checks for a new version. If there is one, an orange **Update available** button appears at the top. Nothing else happens until you click it, read what's new, and choose **Yes**. Only then does it download the update, keep a backup of the old version in the `backup` folder, install, and restart. Your settings, sign-in and pending replies are kept. You can also check any time with the **Check for updates** button at the top of the window, or turn off the startup check under **Settings → Updates**.
 
 ---
 
@@ -99,5 +99,5 @@ Conditional Access and MFA apply to sign-in as normal. Users can revoke access a
 | Quick replies | Your saved one-click replies. Each has its own **Greeting & sign-off** switch |
 | Notifications | A Windows notification (and a flashing taskbar button) when a check finds new emails that need you. Option for urgent emails only, plus a **Send a test notification** button |
 | Sending pace | Replies go out one at a time with a random pause between them, never within a few minutes of an email arriving, and up to an hourly limit, so they look hand-sent rather than automated |
-| Appearance | **Match Windows**, **Light** or **Dark**. There's also a quick Dark mode / Light mode switch at the top of the window |
+| Appearance | **Match Windows**, **Light** or **Dark**. There's also a **Dark mode** switch at the top of the window |
 | AI model name | Any model pulled in Ollama (default `llama3.1:8b`) |
