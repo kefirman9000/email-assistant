@@ -60,6 +60,16 @@ For **Microsoft account**, enter the two codes from IT under **Settings → Conn
 
 Everything else, from notifications to sending pace and quick replies, is under **Settings**.
 
+## Outlook add-in
+
+Prefer to stay in Outlook? Email Assistant can also appear **inside Outlook** (the new Outlook, Outlook on the web and Mac): open an email, click **Suggest replies**, pick from two AI replies or a vibe, and **Reply with this** opens Outlook's reply window ready to send.
+
+1. In the Email Assistant app, go to **Settings → AI** and click **Allow the Outlook add-in**. This lets the add-in use the AI on your PC, and copies the add-in address.
+2. In Outlook, open **Get Add-ins** (or go to <https://aka.ms/olksideload>), choose **My add-ins → Add a custom add-in → Add from URL**, and paste:
+   `https://kefirman9000.github.io/email-assistant/addin/manifest.xml`
+
+Some companies don't allow custom add-ins, or block add-ins from talking to programs on your PC. If so, the add-in says what's wrong, and the Email Assistant app works as usual.
+
 ## Updates
 
 When a new version is out, an orange **Update available** button appears at the top of the window. Click it to see what's new, then choose **Yes** to install. Nothing installs without your OK, and your settings and replies are kept. You can also click **Check for updates** at any time.
