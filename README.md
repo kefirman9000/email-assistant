@@ -14,6 +14,9 @@ Email Assistant checks your inbox, drafts replies to the easy emails, flags the 
 - **Reply picker** with two AI options side by side, plus one-click vibes: *Happier, More frank, Friendly acceptance, Friendly denial, More formal, Shorter* and more
 - **Quick replies** for one-click answers like "Thanks, got it!", no AI needed
 - **Your greeting and sign-off** added automatically, with an on/off switch for any reply
+- **Sender rules**: never reply to someone, always flag them, mark them urgent, or use a formal or casual tone with them
+- **Conversation-aware** replies (optional): the AI can read earlier messages in the thread
+- **Faster or Smarter AI**, with a speed test to pick what suits your PC
 - **Inbox view** of every email, with urgency labels and a built-in email viewer
 - **Auto-refresh** every 5 to 60 minutes, with **Windows notifications** when emails need you
 - **Natural sending pace**: replies go out one at a time with a short random pause, so nothing looks automated

@@ -43,7 +43,7 @@ try:
 except ImportError:
     pythoncom = None
 
-APP_VERSION = "2.5.1"                         # bump this for every release
+APP_VERSION = "2.6.0"                         # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 # Microsoft sign-in. IT gives you these two values (see README, "IT setup").
@@ -99,6 +99,8 @@ DEFAULT_SETTINGS = {
     ],
     "notify": True,                 # Windows notification when new emails need you
     "notify_urgent_only": False,
+    "sender_rules": [],             # [{"match": "@client.com", "action": "formal"}, ...]
+    "use_thread": False,            # give the AI earlier messages in the conversation
     "send_gap": "20-45 seconds (recommended)",      # pause between sent emails
     "min_reply_age": "3 minutes (recommended)",     # don't reply instantly
     "max_per_hour": "30 per hour (recommended)",
@@ -364,6 +366,92 @@ def insert_into_html(body_html, text):
     return (body_html[:m.end()] + html + body_html[m.end():]) if m else html + (body_html or "")
 
 
+# Sender rules: what to do with email from a person or a whole domain
+RULE_ACTIONS = {
+    "Never suggest a reply": "never",
+    "Always needs my attention": "needs_you",
+    "Always mark urgent": "urgent",
+    "Use a formal tone": "formal",
+    "Use a casual tone": "casual",
+}
+TONE_TEXT = {"formal": "Write in a polished, formal, professional tone.",
+             "casual": "Write in a relaxed, casual, friendly tone."}
+
+
+def rule_actions(settings, addr, name=""):
+    """The actions from every sender rule that matches this sender."""
+    addr, name = (addr or "").lower(), (name or "").lower()
+    acts = []
+    for r in settings.get("sender_rules") or []:
+        m = (r.get("match") or "").strip().lower()
+        if m and (m in addr or m in name):
+            acts.append(r.get("action"))
+    return acts
+
+
+# AI models offered in Settings and in "Set up the AI"
+MODELS = {
+    "faster": {"name": "llama3.2:3b", "label": "Faster", "size": "about 2 GB",
+               "desc": "Quick on any PC. Good for short, simple replies."},
+    "smarter": {"name": "llama3.1:8b", "label": "Smarter", "size": "about 5 GB",
+                "desc": "Better writing, but slow on PCs without a graphics card."},
+}
+
+
+def total_ram_gb():
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class MEMSTAT(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong),
+                            ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong),
+                            ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong),
+                            ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            st = MEMSTAT()
+            st.dwLength = ctypes.sizeof(MEMSTAT)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st))
+            return st.ullTotalPhys / 1024 ** 3
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024 ** 3
+    except Exception:
+        return 0.0
+
+
+def recommended_model():
+    """'smarter' on PCs with an NVIDIA graphics card and enough memory, else 'faster'."""
+    has_gpu = bool(shutil.which("nvidia-smi"))
+    return "smarter" if has_gpu and total_ram_gb() >= 12 else "faster"
+
+
+def hardware_summary():
+    ram = total_ram_gb()
+    gpu = "an NVIDIA graphics card" if shutil.which("nvidia-smi") else "no dedicated graphics card"
+    return f"This PC has {ram:.0f} GB of memory and {gpu}." if ram else ""
+
+
+def speed_test(model):
+    """Time one short reply. Returns seconds for a typical reply."""
+    payload = {"model": model, "stream": False, "options": {"num_predict": 70},
+               "prompt": ("Reply briefly and politely to this email: 'Hi, attached is the "
+                          "report you asked for. Can you confirm you got it? Thanks, Sam'")}
+    req = urllib.request.Request(OLLAMA_BASE + "/api/generate",
+                                 data=json.dumps(payload).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=600) as r:
+        warm = json.loads(r.read().decode("utf-8"))          # first run also loads the model
+    with urllib.request.urlopen(urllib.request.Request(
+            OLLAMA_BASE + "/api/generate", data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}), timeout=600) as r:
+        d = json.loads(r.read().decode("utf-8"))
+    secs = (d.get("total_duration") or warm.get("total_duration") or 0) / 1e9
+    # Real emails are longer than this test prompt, so allow for reading time too
+    return secs * 1.8
+
+
 def ignored_list(settings):
     return [s.strip().lower() for s in settings.get("ignored_senders", "").splitlines()
             if s.strip()]
@@ -627,7 +715,7 @@ class Graph:
         if unread_only:
             flt += " and isRead eq false"
         select = ("id,subject,from,toRecipients,receivedDateTime,isRead,webLink,"
-                  "importance,bodyPreview,body,internetMessageHeaders")
+                  "importance,bodyPreview,body,conversationId,internetMessageHeaders")
         params = {"$filter": flt, "$orderby": "receivedDateTime desc", "$top": "25",
                   "$select": select}
         prefer = 'outlook.body-content-type="text"'
@@ -644,6 +732,30 @@ class Graph:
                 yield m
             nxt = page.get("@odata.nextLink")
             page = self.call("GET", nxt, prefer=prefer) if nxt else None
+
+    def thread_messages(self, entry, limit=5):
+        """Earlier messages in the same conversation (including ones you sent),
+        oldest first, using only the new text of each (not the quoted history)."""
+        cid = entry.get("conversation_id")
+        if not cid:
+            return []
+        flt = "conversationId eq '" + cid.replace("'", "''") + "'"
+        d = self.call("GET", "/me/messages" + _query({
+            "$filter": flt, "$top": "25",
+            "$select": "id,from,receivedDateTime,uniqueBody"}),
+            prefer='outlook.body-content-type="text"')
+        msgs = [m for m in d.get("value") or [] if m.get("id") != entry["id"]
+                and (m.get("receivedDateTime") or "") <= (entry.get("received_iso") or "~")]
+        msgs.sort(key=lambda m: m.get("receivedDateTime") or "")
+        out = []
+        for m in msgs[-limit:]:
+            sender = ((m.get("from") or {}).get("emailAddress") or {})
+            text = " ".join(((m.get("uniqueBody") or {}).get("content") or "").split())
+            if text:
+                out.append({"from": sender.get("name") or sender.get("address") or "?",
+                            "when": local_time_label(m.get("receivedDateTime")),
+                            "text": text[:700]})
+        return out
 
     def message_body(self, msg_id):
         d = self.call("GET", f"/me/messages/{_q(msg_id)}" + _query({"$select": "body"}),
@@ -919,6 +1031,36 @@ class ClassicOutlook:
     def message_body(self, msg_id):
         return self.ns.GetItemFromID(msg_id).Body or ""
 
+    def thread_messages(self, entry, limit=5):
+        """Earlier messages in the same conversation, oldest first."""
+        item = self.ns.GetItemFromID(entry["id"])
+        conv = item.GetConversation()
+        if conv is None:
+            return []
+        table = conv.GetTable()
+        found = []
+        while not table.EndOfTable:
+            row = table.GetNextRow()
+            eid = row("EntryID")
+            if eid == entry["id"]:
+                continue
+            try:
+                it = self.ns.GetItemFromID(eid)
+                when = _naive_local(getattr(it, "ReceivedTime", None) or it.SentOn)
+                if when > _naive_local(item.ReceivedTime):
+                    continue
+                body = it.Body or ""
+                # keep only the new part, not the quoted earlier emails
+                body = re.split(r"\n\s*(?:From:|-----Original Message-----|On .{5,80} wrote:)",
+                                body, maxsplit=1)[0]
+                found.append((when, {"from": it.SenderName or "?",
+                                     "when": when.strftime("%a %b %d, %I:%M %p"),
+                                     "text": " ".join(body.split())[:700]}))
+            except Exception:
+                continue
+        found.sort(key=lambda x: x[0])
+        return [f for _, f in found][-limit:]
+
     def create_reply_draft(self, msg_id, text):
         try:
             reply = self.ns.GetItemFromID(msg_id).Reply()
@@ -1185,6 +1327,12 @@ def pull_model(model, progress):
     return True
 
 
+def ai_problem_raise(model):
+    problem = ollama_problem(model)
+    if problem:
+        raise GraphError(problem)
+
+
 def ollama_problem(model):
     st = ai_status(model)
     if st == "ok":
@@ -1223,7 +1371,10 @@ Rules:
 {s['extra_rules']}
 For "simple", "reply" is ONLY the middle of the message: no greeting line
 (no "Hi ..."), no closing, no name or signature. Those are added automatically.
-Keep it brief, friendly and professional (1-4 sentences).
+Keep it brief, friendly and professional (1-4 sentences), unless a tone for this
+sender is given; then use that tone.
+Earlier messages in the conversation, if given, are background only: the reply
+is to the latest email.
 "reason" is one short plain-English sentence explaining your choice.
 Respond only with JSON."""
 
@@ -1263,6 +1414,7 @@ OPTIONS_SCHEMA = {
 
 def options_prompt(s):
     return f"""You write short email replies for {s['my_name']} ({s['my_role']}).
+If a tone for this sender is given, use it.
 Write TWO clearly different versions of a reply, so the user can pick one.
 The two must differ in wording and approach, not just a word or two.
 For each, give "style": a 2-4 word description (e.g. "Brief and warm"), and
@@ -1284,7 +1436,7 @@ def generate_options(settings, entry, direction, body=None):
     if body is None:
         body = mailbox(settings).message_body(entry["id"])
     user = email_text(entry["from"], entry["address"], entry["subject"], body,
-                      entry.get("importance", "normal"))
+                      entry.get("importance", "normal")) + extra_context(settings, entry)
     if entry.get("reply"):
         user += f"\n\n--- Current suggested reply ---\n{entry['reply']}"
     user += ("\n\n--- Direction from the user ---\n" + direction if direction else
@@ -1304,6 +1456,24 @@ def generate_options(settings, entry, direction, body=None):
     if not options:
         raise GraphError("The AI didn't return any replies. Please try again.")
     return body, options[:2]
+
+
+def extra_context(settings, entry, mb=None):
+    """Tone from sender rules, plus earlier messages in the thread if enabled."""
+    parts = []
+    tone = entry.get("tone")
+    if tone in TONE_TEXT:
+        parts.append(f"--- Tone for this sender ---\n{TONE_TEXT[tone]}")
+    if settings.get("use_thread"):
+        try:
+            earlier = (mb or mailbox(settings)).thread_messages(entry)
+        except Exception:
+            earlier = []
+        if earlier:
+            lines = [f"[{m['when']}] {m['from']}:\n{m['text']}" for m in earlier]
+            parts.append("--- Earlier messages in this conversation, oldest first ---\n"
+                         + "\n\n".join(lines)[-3000:])
+    return ("\n\n" + "\n\n".join(parts)) if parts else ""
 
 
 def email_text(name, addr, subject, body, importance="normal"):
@@ -1326,7 +1496,6 @@ def check_worker(settings, processed, out):
         out.put(("progress", "Connecting to Outlook..." if uses_classic(settings)
                  else "Connecting to your mailbox..."))
         _, me = g.me()
-        ignored = ignored_list(settings)
         cutoff = range_cutoff(settings.get("check_range"))
         # An automatic refresh always looks back at least as far as the last check,
         # so nothing is missed if the time range is shorter than the refresh interval
@@ -1349,6 +1518,9 @@ def check_worker(settings, processed, out):
             name = sender.get("name") or addr
             subject = m.get("subject") or "(no subject)"
             importance = (m.get("importance") or "normal").lower()
+            acts = rule_actions(settings, addr, name)
+            if "urgent" in acts:
+                importance = "high"
             to = {((r.get("emailAddress") or {}).get("address") or "").lower()
                   for r in m.get("toRecipients") or []}
             entry = {"id": mid, "source": "graph", "from": name,
@@ -1358,13 +1530,15 @@ def check_worker(settings, processed, out):
                      "received_iso": m.get("receivedDateTime") or "",
                      "importance": importance,
                      "preview": (m.get("bodyPreview") or "").strip()[:300],
+                     "conversation_id": m.get("conversationId") or "",
+                     "tone": next((a for a in acts if a in TONE_TEXT), ""),
                      "reason": "", "reply": ""}
 
             skip = None
             if addr and addr in me:
                 skip = "sent by you"
-            elif any(s and s in addr for s in ignored):
-                skip = "sender is on your ignore list"
+            elif "never" in acts:
+                skip = "you have a rule to never reply to this sender"
             elif looks_automated(m, addr, []):
                 skip = "newsletter or automated message"
             elif settings["only_direct"] and me and not (to & me):
@@ -1374,12 +1548,17 @@ def check_worker(settings, processed, out):
                 entry["reason"] = f"Skipped: {skip}."
                 out.put(("result", "skipped", entry))
                 continue
+            if "needs_you" in acts:
+                counts["needs_you"] += 1
+                entry["reason"] = "Your sender rule: this sender always needs your attention."
+                out.put(("result", "needs_you", entry))
+                continue
             out.put(("progress", f"Reading email {n}: {subject[:60]}"))
             try:
                 res = ask_ollama(settings["model"], triage_prompt(settings),
                                  email_text(name, addr, subject,
                                             (m.get("body") or {}).get("content", ""),
-                                            importance),
+                                            importance) + extra_context(settings, entry, g),
                                  TRIAGE_SCHEMA)
             except (urllib.error.URLError, TimeoutError):
                 out.put(("error", "The AI stopped responding. Make sure Ollama is "
@@ -2101,6 +2280,16 @@ class EmailAssistant:
         self.root = root
         self.rebuild = False
         self.settings = load_json(SETTINGS_FILE, DEFAULT_SETTINGS)
+        old_ignored = [x.strip() for x in (self.settings.get("ignored_senders") or "").splitlines()
+                       if x.strip()]
+        if old_ignored:                       # older versions had a plain "ignore" list
+            rules = list(self.settings.get("sender_rules") or [])
+            for x in old_ignored:
+                if not any(r.get("match") == x for r in rules):
+                    rules.append({"match": x, "action": "never"})
+            self.settings["sender_rules"] = rules
+            self.settings["ignored_senders"] = ""
+            save_json(SETTINGS_FILE, self.settings)
         self.data = load_json(STATE_FILE, {"processed": [], "suggested": [], "needs_you": [],
                                            "inbox": []})
         # Items saved by the old classic-Outlook version can't be opened through Graph
@@ -2869,10 +3058,42 @@ class EmailAssistant:
         body = section("Assistant rules")
         label(body, "Rules the assistant should always follow (one per line)")
         textbox(body, "extra_rules", 4)
-        label(body, "Never suggest replies to these senders")
-        tk.Label(body, text="One email address, or part of one like @vendor.com, per line.",
-                 font=FONT_S, bg=CARD, fg=MUTED, anchor="w").pack(fill="x", pady=(0, px(4)))
-        textbox(body, "ignored_senders", 3)
+
+        # --- Sender rules
+        body = section("Sender rules", "Choose what happens with email from a person or a "
+                                       "whole company. Type an address, or part of one like "
+                                       "@client.com.")
+        self.rule_rows = []
+        rules_list = tk.Frame(body, bg=CARD)
+        rules_list.pack(fill="x")
+
+        def add_rule(match="", action="never", focus=False):
+            row = tk.Frame(rules_list, bg=CARD)
+            row.pack(fill="x", pady=px(3))
+            names = {v: k for k, v in RULE_ACTIONS.items()}
+            item = {"frame": row, "match": tk.StringVar(value=match),
+                    "action": tk.StringVar(value=names.get(action, "Never suggest a reply"))}
+
+            def remove():
+                row.destroy()
+                if item in self.rule_rows:
+                    self.rule_rows.remove(item)
+            button(row, "Remove", remove, "danger", small=True).pack(side="right")
+            ttk.Combobox(row, textvariable=item["action"], values=list(RULE_ACTIONS),
+                         state="readonly", width=26, font=FONT
+                         ).pack(side="right", padx=(px(10), px(10)))
+            ent = field_entry(row, item["match"])
+            ent.pack(side="left", fill="x", expand=True, ipady=px(5))
+            if focus:
+                ent.focus_set()
+            self.rule_rows.append(item)
+        for r in s.get("sender_rules") or []:
+            add_rule(r.get("match", ""), r.get("action", "never"))
+        if not self.rule_rows:
+            tk.Label(rules_list, text="No rules yet.", font=FONT_S, bg=CARD, fg=SUBTLE,
+                     anchor="w").pack(fill="x")
+        button(body, "+ Add rule", lambda: add_rule(focus=True), "chip", small=True
+               ).pack(anchor="w", pady=(px(8), 0))
 
         # --- Behaviour
         body = section("Replying", "Which emails to look at and auto-refresh are set at the "
@@ -2880,6 +3101,8 @@ class EmailAssistant:
         check(body, "only_direct", "Only suggest replies when I'm on the To line, not just CC'd")
         check(body, "confirm_each_send", "Show the full reply one last time before it's sent")
         check(body, "mark_read_after_send", "Mark the original email as read after I reply")
+        check(body, "use_thread", "Read earlier messages in the conversation for better "
+                                  "replies (a little slower)")
 
         # --- Notifications
         body = section("Notifications", "A Windows notification appears when a check finds "
@@ -2934,10 +3157,34 @@ class EmailAssistant:
                                        lambda: self.check_for_updates(manual=True))
         self.update_check_btn.pack(anchor="w", pady=(px(10), 0))
 
+        # --- AI
+        body = section("AI", hardware_summary() + " " +
+                       f"{MODELS[recommended_model()]['label']} is recommended for this PC."
+                       if hardware_summary() else None)
+        self.model_choice = tk.StringVar(value=next(
+            (k for k, m in MODELS.items() if m["name"] == s.get("model")), "custom"))
+        for key, m in MODELS.items():
+            ttk.Radiobutton(body, text=f"{m['label']}  ({m['size']})", value=key,
+                            variable=self.model_choice, style="CardBold.TRadiobutton",
+                            command=lambda: self.fields["model"].set(
+                                MODELS[self.model_choice.get()]["name"])
+                            ).pack(fill="x", anchor="w")
+            tk.Label(body, text=m["desc"], font=FONT_S, bg=CARD, fg=MUTED, anchor="w"
+                     ).pack(fill="x", padx=(px(25), 0), pady=(0, px(6)))
+        arow = tk.Frame(body, bg=CARD)
+        arow.pack(fill="x", pady=(px(6), 0))
+        button(arow, "Set up the AI", self.open_ai_setup).pack(side="left")
+        self.speed_btn = button(arow, "Test speed", self.test_speed)
+        self.speed_btn.pack(side="left", padx=px(8))
+        self.speed_label = tk.Label(arow, text="", font=FONT_S, bg=CARD, fg=MUTED)
+        self.speed_label.pack(side="left", padx=px(4))
+
         # --- Advanced
         body = section("Advanced")
         entry(body, "model", "AI model name", 24)
-        button(body, "Set up the AI", self.open_ai_setup).pack(anchor="w", pady=(px(10), 0))
+        tk.Label(body, text="Only change this if you know which Ollama model you want. "
+                            "Faster and Smarter above fill it in for you.", font=FONT_S,
+                 bg=CARD, fg=MUTED, anchor="w").pack(fill="x", pady=(px(4), 0))
         tk.Frame(wrap, bg=BG, height=px(16)).pack()
         self.refresh_account()
 
@@ -2955,14 +3202,24 @@ class EmailAssistant:
         except ValueError:
             new["auto_check_minutes"] = 0
         new["model"] = (new["model"] or "").strip() or DEFAULT_SETTINGS["model"]
+        if getattr(self, "rule_rows", None) is not None:
+            names = RULE_ACTIONS
+            new["sender_rules"] = [{"match": r["match"].get().strip(),
+                                    "action": names.get(r["action"].get(), "never")}
+                                   for r in self.rule_rows if r["match"].get().strip()]
         if getattr(self, "qr_rows", None) is not None:
             new["quick_replies"] = [{"text": r["text"].get().strip(),
                                      "wrap": bool(r["wrap"].get())}
                                     for r in self.qr_rows if r["text"].get().strip()]
         if sign_in_ids(new) != sign_in_ids(self.settings):
             new["account"] = ""          # different Microsoft app/tenant: sign in again
+        model_changed = new.get("model") != self.settings.get("model")
         self.settings = new
         save_json(SETTINGS_FILE, new)
+        if model_changed and not quiet:
+            m = new.get("model")
+            self.run_bg(lambda: ai_status(m),
+                        lambda st_, e_: st_ not in (None, "ok") and self.open_ai_setup())
         self.schedule_auto()
         self.refresh_account()
         if not quiet:
@@ -3358,8 +3615,12 @@ class EmailAssistant:
             return
         win = self.dialog("Set up the AI", 620, 520)
         self._ai_win = win
-        model = self.settings.get("model", DEFAULT_SETTINGS["model"])
-        st = {"status": None, "busy": False}
+        st = {"status": None, "busy": False,
+              "model": self.settings.get("model", DEFAULT_SETTINGS["model"])}
+        if st["model"] not in [m["name"] for m in MODELS.values()]:
+            pass                      # a custom model: keep it
+        elif ai_status(st["model"]) != "ok" and not self.settings.get("_model_chosen"):
+            st["model"] = MODELS[recommended_model()]["name"]   # suggest what suits this PC
 
         wrap = tk.Frame(win, bg=BG, padx=px(26), pady=px(20))
         wrap.pack(fill="both", expand=True)
@@ -3374,7 +3635,7 @@ class EmailAssistant:
         for n, (title, desc) in enumerate((
                 ("Install Ollama", "Download it from ollama.com and run the installer."),
                 ("Start Ollama", "Ollama runs quietly in the background."),
-                ("Download the AI model", f"About 5 GB, one time only ({model}).")), 1):
+                ("Choose and download the AI", "A one-time download.")), 1):
             outer = tk.Frame(wrap, bg=BORDER)
             outer.pack(fill="x", pady=(0, px(10)))
             card = tk.Frame(outer, bg=CARD, padx=px(16), pady=px(14))
@@ -3392,6 +3653,29 @@ class EmailAssistant:
             btn.pack(side="right")
             steps.append({"n": n, "badge": badge, "title": t, "desc": d, "btn": btn,
                           "mid": mid})
+
+        # Faster / Smarter choice inside step 3
+        choice = tk.Frame(steps[2]["mid"], bg=CARD)
+        rec = recommended_model()
+        choice_var = tk.StringVar(value=next((k for k, m in MODELS.items()
+                                              if m["name"] == st["model"]), rec))
+
+        def pick():
+            st["model"] = MODELS[choice_var.get()]["name"]
+            self.settings["model"] = st["model"]
+            self.settings["_model_chosen"] = True
+            save_json(SETTINGS_FILE, self.settings)
+            if "model" in getattr(self, "fields", {}):
+                self.fields["model"].set(st["model"])
+            self.run_bg(lambda: ai_status(st["model"]), lambda r_, e_: r_ and render(r_))
+        for key, m in MODELS.items():
+            ttk.Radiobutton(choice, text=f"{m['label']} ({m['size']})"
+                            + ("  - recommended for this PC" if key == rec else ""),
+                            value=key, variable=choice_var, command=pick,
+                            style="Card.TRadiobutton").pack(anchor="w")
+        if st["model"] in [m["name"] for m in MODELS.values()]:
+            choice.pack(fill="x", pady=(px(6), 0))
+            self.settings["model"] = st["model"]
 
         bar = ttk.Progressbar(steps[2]["mid"], style="Accent.Horizontal.TProgressbar",
                               mode="determinate", maximum=1000)
@@ -3452,7 +3736,7 @@ class EmailAssistant:
             if not win.winfo_exists():
                 return
             if not st["busy"]:
-                self.run_bg(lambda: ai_status(model),
+                self.run_bg(lambda: ai_status(st["model"]),
                             lambda r, e: win.winfo_exists() and r and render(r))
             if st["status"] != "ok":
                 win.after(3000, recheck)
@@ -3468,10 +3752,15 @@ class EmailAssistant:
                     return
                 msg.configure(text=friendly_error(err) if err else "Ollama is running.",
                               fg=DANGER if err else MUTED)
-                self.run_bg(lambda: ai_status(model), lambda r2, e2: r2 and render(r2))
+                self.run_bg(lambda: ai_status(st["model"]), lambda r2, e2: r2 and render(r2))
             self.run_bg(start_ollama, done)
 
         def do_pull():
+            self.settings["model"] = st["model"]          # use what's being downloaded
+            save_json(SETTINGS_FILE, self.settings)
+            if "model" in getattr(self, "fields", {}):
+                self.fields["model"].set(st["model"])
+            choice.pack_forget()
             st["busy"] = True
             render(st["status"])
             bar.pack(fill="x", pady=(px(8), px(2)))
@@ -3503,11 +3792,37 @@ class EmailAssistant:
                 else:
                     bar.configure(value=1000)
                     bar_text.configure(text="Downloaded.")
-                self.run_bg(lambda: ai_status(model), lambda r2, e2: r2 and render(r2))
-            self.run_bg(lambda: pull_model(model, progress), done)
+                self.run_bg(lambda: ai_status(st["model"]), lambda r2, e2: r2 and render(r2))
+            self.run_bg(lambda: pull_model(st["model"], progress), done)
 
         render("missing")
         recheck()
+
+    def test_speed(self):
+        model = self.fields["model"].get().strip() or self.settings.get("model")
+        self.speed_btn.configure(state="disabled", text="Testing...")
+        self.speed_label.configure(text="Writing a test reply. This can take a minute "
+                                        "the first time.", fg=MUTED)
+
+        def done(secs, err):
+            try:
+                self.speed_btn.configure(state="normal", text="Test speed")
+            except tk.TclError:
+                return
+            if err:
+                self.speed_label.configure(text=friendly_error(err).split("\n")[0], fg=DANGER)
+                return
+            if secs < 12:
+                verdict, colour = "nice and quick", GOOD
+            elif secs < 30:
+                verdict, colour = "fine", TEXT
+            else:
+                verdict, colour = "slow", DANGER
+            tip = (" Try Faster for quicker replies." if secs >= 30 and
+                   model == MODELS["smarter"]["name"] else "")
+            self.speed_label.configure(text=f"About {secs:.0f} seconds per email: {verdict}."
+                                            + tip, fg=colour)
+        self.run_bg(lambda: (ai_problem_raise(model), speed_test(model))[1], done)
 
     # ----- quick replies -----
     def quick_menu(self, anchor, on_pick):
