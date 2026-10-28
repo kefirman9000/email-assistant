@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Email Assistant</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <link rel="stylesheet" href="taskpane.css">
+</head>
+<body>
+  <header class="head">
+    <img src="icon-64.png" alt="" class="logo">
+    <div class="who">
+      <div class="title">Email Assistant</div>
+      <div class="sub" id="email-line">Open an email to get reply suggestions.</div>
+    </div>
+    <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings">&#9881;</button>
+  </header>
+
+  <!-- Settings (hidden until the gear is clicked) -->
+  <section id="settings" class="card hidden">
+    <div class="card-title">Settings</div>
+    <label>Your name<input id="s-name" type="text"></label>
+    <label>Greeting<input id="s-greeting" type="text"></label>
+    <label>Sign-off<textarea id="s-signoff" rows="2"></textarea></label>
+    <div class="hint">{first_name} becomes the sender's first name; {my_name} becomes your name.</div>
+    <label>AI model<select id="s-model"></select></label>
+    <div class="row-end">
+      <button class="btn ghost" id="s-cancel">Cancel</button>
+      <button class="btn primary" id="s-save">Save</button>
+    </div>
+  </section>
+
+  <main id="main">
+    <div class="label">Pick a vibe</div>
+    <div class="chips" id="chips"></div>
+    <div class="custom">
+      <input id="custom" type="text" placeholder="Or describe it, e.g. say yes but suggest 3pm">
+      <button class="btn" id="custom-go">Go</button>
+    </div>
+    <label class="check"><input type="checkbox" id="use-headers" checked> Include greeting and sign-off</label>
+
+    <div id="status" class="status"></div>
+    <div id="options"></div>
+    <div id="problem" class="problem hidden"></div>
+    <button class="btn wide" id="more">Two more like these</button>
+  </main>
+
+  <footer class="foot">Written by the AI on your own PC. Nothing is sent until you click Send in Outlook.</footer>
+  <script src="taskpane.js"></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
 {
-  "version": "2.6.0",
-  "notes": "New: Sender rules. Decide what happens with email from a person or a whole company: never suggest a reply, always flag it for you, mark it urgent, or reply in a formal or casual tone. Your old 'never reply to' list has been moved into the rules.\n\nNew: Conversation-aware replies (optional). Tick 'Read earlier messages in the conversation' under Settings > Replying and the AI also sees the earlier messages in the thread.\n\nNew: Faster or Smarter AI. Choose the AI that suits your PC under Settings > AI, and use Test speed to see how long a reply takes."
+  "version": "2.7.0",
+  "notes": "New: Email Assistant inside Outlook. An optional Outlook add-in puts a 'Suggest replies' button in Outlook itself, with the same two AI options and vibe buttons. To set it up, go to Settings > AI and click 'Allow the Outlook add-in'."
 }

@@ -43,7 +43,7 @@ try:
 except ImportError:
     pythoncom = None
 
-APP_VERSION = "2.6.0"                         # bump this for every release
+APP_VERSION = "2.7.0"                         # bump this for every release
 UPDATE_REPO = "kefirman9000/email-assistant"   # GitHub repo that publishes updates
 
 # Microsoft sign-in. IT gives you these two values (see README, "IT setup").
@@ -1325,6 +1325,45 @@ def pull_model(model, progress):
             if d.get("status") == "success":
                 return True
     return True
+
+
+ADDIN_ORIGIN = "https://kefirman9000.github.io"
+ADDIN_MANIFEST_URL = "https://kefirman9000.github.io/email-assistant/addin/manifest.xml"
+
+
+def allow_outlook_addin():
+    """Let the Outlook add-in (a web page) talk to Ollama on this PC: add its
+    address to OLLAMA_ORIGINS for this Windows user, then restart Ollama."""
+    if sys.platform != "win32":
+        raise GraphError("This step is only needed on Windows.")
+    import winreg
+    import ctypes
+    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0,
+                         winreg.KEY_READ | winreg.KEY_WRITE)
+    try:
+        try:
+            current, kind = winreg.QueryValueEx(key, "OLLAMA_ORIGINS")
+        except FileNotFoundError:
+            current, kind = "", winreg.REG_SZ
+        parts = [p.strip() for p in (current or "").split(",") if p.strip()]
+        if ADDIN_ORIGIN not in parts:
+            parts.append(ADDIN_ORIGIN)
+        value = ",".join(parts)
+        winreg.SetValueEx(key, "OLLAMA_ORIGINS", 0, kind, value)
+    finally:
+        winreg.CloseKey(key)
+    os.environ["OLLAMA_ORIGINS"] = value          # so the restarted Ollama sees it now
+    try:                                          # tell Windows the setting changed
+        ctypes.windll.user32.SendMessageTimeoutW(0xFFFF, 0x001A, 0, "Environment", 0x0002,
+                                                 5000, ctypes.byref(ctypes.c_ulong()))
+    except Exception:
+        pass
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    for exe in ("ollama app.exe", "ollama.exe"):
+        subprocess.run(["taskkill", "/F", "/IM", exe], capture_output=True, creationflags=flags)
+    time.sleep(2)
+    start_ollama()
+    return value
 
 
 def ai_problem_raise(model):
@@ -3178,6 +3217,15 @@ class EmailAssistant:
         self.speed_btn.pack(side="left", padx=px(8))
         self.speed_label = tk.Label(arow, text="", font=FONT_S, bg=CARD, fg=MUTED)
         self.speed_label.pack(side="left", padx=px(4))
+        tk.Frame(body, bg=BORDER, height=1).pack(fill="x", pady=(px(14), px(10)))
+        tk.Label(body, text="Outlook add-in", font=FONT_B, bg=CARD, fg=TEXT, anchor="w"
+                 ).pack(fill="x")
+        tk.Label(body, text="Get reply suggestions inside Outlook too. First let the add-in use "
+                            "the AI on this PC, then add it to Outlook with the address that "
+                            "gets copied.", font=FONT_S, bg=CARD, fg=MUTED, anchor="w",
+                 justify="left", wraplength=px(760)).pack(fill="x", pady=(px(2), px(6)))
+        self.addin_btn = button(body, "Allow the Outlook add-in", self.enable_addin)
+        self.addin_btn.pack(anchor="w")
 
         # --- Advanced
         body = section("Advanced")
@@ -3797,6 +3845,30 @@ class EmailAssistant:
 
         render("missing")
         recheck()
+
+    def enable_addin(self):
+        self.addin_btn.configure(state="disabled", text="Setting up...")
+
+        def done(_r, err):
+            try:
+                self.addin_btn.configure(state="normal", text="Allow the Outlook add-in")
+            except tk.TclError:
+                return
+            if err:
+                messagebox.showwarning("Outlook add-in", friendly_error(err))
+                return
+            self.root.clipboard_clear()
+            self.root.clipboard_append(ADDIN_MANIFEST_URL)
+            messagebox.showinfo(
+                "Outlook add-in",
+                "Done. The Outlook add-in can now use the AI on this PC.\n\n"
+                "To add it to Outlook:\n"
+                "1. In Outlook, open Get Add-ins (or go to aka.ms/olksideload in a browser).\n"
+                "2. Choose My add-ins, then Add a custom add-in, then Add from URL.\n"
+                "3. Paste the address (it's already copied):\n"
+                f"{ADDIN_MANIFEST_URL}\n\n"
+                "Then open any email and click Suggest replies.")
+        self.run_bg(allow_outlook_addin, done)
 
     def test_speed(self):
         model = self.fields["model"].get().strip() or self.settings.get("model")
