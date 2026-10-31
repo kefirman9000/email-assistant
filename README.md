@@ -138,3 +138,16 @@ Conditional Access and MFA apply as normal. Users can remove the app's access at
 ## Support Email Assistant
 
 Email Assistant is free. If it saves you time on your inbox, you can support its development on **[GitHub Sponsors](https://github.com/sponsors/kefirman9000)**. It helps keep new features and fixes coming. Starring the repo and reporting problems help too.
+
+## License and disclaimer
+
+Copyright © 2026 kefirman9000. All rights reserved. Email Assistant is free to use; see [LICENSE](LICENSE) for what is and isn't allowed.
+
+- AI-drafted replies can be wrong or inappropriate. Read every reply before you send it; you are responsible for what is sent from your account.
+- Follow your organisation's IT and data policies when using it with work email.
+
+Email Assistant is provided **as is**, without warranty of any kind. Use it at your own risk; the author is not liable for any damage, data loss or other loss arising from its use.
+
+Email Assistant is an independent project and is not affiliated with, endorsed by or sponsored by any of the companies or products named here. Microsoft, Outlook and Windows are trademarks of Microsoft Corporation. Ollama belongs to its respective owners.
+
+Found a security problem? Please report it privately; see [SECURITY.md](SECURITY.md).
