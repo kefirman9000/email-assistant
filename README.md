@@ -134,3 +134,7 @@ Your email stays between your PC and Microsoft. The AI runs on your own computer
 
 Conditional Access and MFA apply as normal. Users can remove the app's access at <https://myapps.microsoft.com>, and admins can delete the app registration at any time.
 </details>
+
+## Support Email Assistant
+
+Email Assistant is free. If it saves you time on your inbox, you can support its development on **[GitHub Sponsors](https://github.com/sponsors/kefirman9000)**. It helps keep new features and fixes coming. Starring the repo and reporting problems help too.
